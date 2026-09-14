@@ -24,6 +24,7 @@ MODE_2 = 2
 MODE_3 = 3
 MODE_4 = 4
 MODE_5 = 5
+MODE_MXFP4 = 6
 FP8_E4M3_BLOCK_SIZE = 32
 
 # 290 -> torch_npu.hifloat8（ACL_HIFLOAT8=34，hifloat8 以 uint8 存储时，须通过 *_dtype 显式指定）
@@ -132,22 +133,23 @@ def _meta_outputs(
         dequant_scale_q_nope = torch.empty([0], dtype=torch.float32, device="meta")
 
     # 空输出占位 dtype 与 op_plugin npu_mla_prolog_v3 对齐
-    qn_dtype = torch.uint8 if is_hifloat8 else weight_uq_qr.dtype
+    qn_dtype = torch.bfloat16 if weight_quant_mode == MODE_MXFP4 else (torch.uint8 if is_hifloat8 else weight_uq_qr.dtype)
+    hcq = weight_dq.size(0) * 64 if weight_quant_mode == MODE_MXFP4 else weight_dq.size(1)
     if query_norm_flag:
         if token_x.dim() == DIM_3:
             query_norm = torch.empty(
-                [token_x.size(0), token_x.size(1), weight_dq.size(1)],
+                [token_x.size(0), token_x.size(1), hcq],
                 dtype=qn_dtype,
                 device="meta",
             )
         else:
             query_norm = torch.empty(
-                [token_x.size(0), weight_dq.size(1)], dtype=qn_dtype, device="meta"
+                [token_x.size(0), hcq], dtype=qn_dtype, device="meta"
             )
     else:
-        query_norm = torch.empty([0], dtype=weight_uq_qr.dtype, device="meta")
+        query_norm = torch.empty([0], dtype=qn_dtype, device="meta")
 
-    if query_norm_flag and weight_quant_mode != 0:
+    if query_norm_flag and weight_quant_mode not in (0, MODE_MXFP4):
         dsn0 = (
             token_x.size(0) * token_x.size(1)
             if token_x.dim() == DIM_3
@@ -320,7 +322,11 @@ def mla_prolog(
     weight_dkv_kr_dtype: Optional[int] = None,
     kv_cache_dtype: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """MLA Prolog 前向计算（原地更新 kv_cache/kr_cache），封装 aclnnMlaPrologV4WeightNz。
+    """MLA Prolog 前向计算（原地更新 kv_cache/kr_cache）。
+
+    Mode 6 calls the experimental V3 MXFP4 API; existing modes keep the V4 API.
+    Mode 6 uses uint8 token [T,He/2], prepacked NZ weights [N/64,K/16,16,32],
+    contiguous 2D E8M0 scales, and BF16 query_norm without scale output.
 
     RoPE 开关由 rope_sin/rope_cos 是否成对传入决定：二者同时为空（或 None）视为关闭，
     二者同时非空视为开启，一空一非空视为非法输入。

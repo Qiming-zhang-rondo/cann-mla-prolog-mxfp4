@@ -1,0 +1,883 @@
+# Generated with official generate_spec.py then filled as a contract draft.
+# Generic validation is NOT ALL PASS; see ../tests/reports/SPEC_VALIDATION.md.
+schema_version: 1
+op:
+  name: mla_prolog_v3_mxfp4
+  version: '0.1'
+  description: Proposed A5 MXFP4 extension; incomplete physical/quant contract, not
+    a deployment support claim.
+  category: FusedComposite
+  paradigms:
+  - Contraction
+  - Reduction
+  - Quantization
+  - ScatterUpdate
+  - FusedComposite
+  error_codes:
+  - null_input
+  - shape_mismatch
+  - attribute_value_out_of_range
+  platform_constraints:
+    supported_chips:
+    - Ascend950PR
+    - Ascend950DT
+  paradigm_groups:
+  - kind: fusion
+    paradigms:
+    - Contraction
+    - Reduction
+    - Quantization
+    - ScatterUpdate
+    - FusedComposite
+  lifecycle: experimental
+inputs:
+- name: token_x
+  role: tensor
+  dtype_set:
+  - float4_e2m1
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - T
+    - He
+  optional: false
+- name: weight_dq
+  role: tensor
+  dtype_set:
+  - float4_e2m1
+  rank_range:
+  - 2
+  - 2
+  layout: FRACTAL_NZ
+  shape:
+    symbolic:
+    - He
+    - Hcq
+  optional: false
+  description: Logical matrix axes; A4W4 NZ storage [N/64,K/16,16,64] in logical FP4
+    elements, C0=64. Payload half a byte per element.
+- name: weight_uq_qr
+  role: tensor
+  dtype_set:
+  - float4_e2m1
+  rank_range:
+  - 2
+  - 2
+  layout: FRACTAL_NZ
+  shape:
+    symbolic:
+    - Hcq
+    - Nout
+  optional: false
+  description: Logical matrix axes; A4W4 NZ storage [N/64,K/16,16,64] in logical FP4
+    elements, C0=64. Payload half a byte per element.
+- name: weight_uk
+  role: tensor
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 3
+  - 3
+  layout: ND
+  shape:
+    symbolic:
+    - N
+    - D
+    - Hckv
+  optional: false
+- name: weight_dkv_kr
+  role: tensor
+  dtype_set:
+  - float4_e2m1
+  rank_range:
+  - 2
+  - 2
+  layout: FRACTAL_NZ
+  shape:
+    symbolic:
+    - He
+    - HckvDr
+  optional: false
+  description: Logical matrix axes; A4W4 NZ storage [N/64,K/16,16,64] in logical FP4
+    elements, C0=64. Payload half a byte per element.
+- name: rmsnorm_gamma_cq
+  role: tensor
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - Hcq
+  optional: false
+- name: rmsnorm_gamma_ckv
+  role: tensor
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - Hckv
+  optional: false
+- name: rope_sin
+  role: tensor
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - T
+    - Dr
+  optional: false
+- name: rope_cos
+  role: tensor
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - T
+    - Dr
+  optional: false
+- name: kv_cache
+  role: state
+  dtype_set:
+  - bfloat16
+  - float8_e4m3fn
+  rank_range:
+  - 4
+  - 4
+  layout: ND
+  shape:
+    symbolic:
+    - Pages
+    - Block
+    - 1
+    - Dtile
+  optional: false
+  description: 'PA_BSND: mode0 BF16 Dtile=512; mode3 FP8E4M3 byte container Dtile=656.'
+- name: kr_cache
+  role: state
+  dtype_set:
+  - bfloat16
+  rank_range:
+  - 1
+  - 4
+  layout: ND
+  shape:
+    symbolic:
+    - Pages
+    - Block
+    - 1
+    - 64
+  optional: false
+  description: mode0 BF16 [Pages,Block,1,64]; mode3 BF16 [0], combine layout.
+- name: cache_index
+  role: tensor
+  dtype_set:
+  - int64
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - T
+  optional: false
+- name: dequant_scale_x
+  role: tensor
+  dtype_set:
+  - float8_e8m0
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - T
+    - HeGroups
+  optional: false
+- name: dequant_scale_w_dq
+  role: tensor
+  dtype_set:
+  - float8_e8m0
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - Hcq
+    - HeGroups
+  optional: false
+- name: dequant_scale_w_uq_qr
+  role: tensor
+  dtype_set:
+  - float8_e8m0
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - Nout
+    - HcqGroups
+  optional: false
+- name: dequant_scale_w_dkv_kr
+  role: tensor
+  dtype_set:
+  - float8_e8m0
+  rank_range:
+  - 2
+  - 2
+  layout: ND
+  shape:
+    symbolic:
+    - HckvDr
+    - HeGroups
+  optional: false
+- name: quant_scale_ckv
+  role: tensor
+  dtype_set:
+  - float32
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - CkvScaleElements
+  optional: true
+- name: quant_scale_ckr
+  role: tensor
+  dtype_set:
+  - float32
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - CkrScaleElements
+  optional: true
+- name: smooth_scales_cq
+  role: tensor
+  dtype_set:
+  - float32
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - Hcq
+  optional: true
+- name: actual_seq_len
+  role: tensor
+  dtype_set:
+  - int32
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - 0
+  optional: true
+  description: IR dtype INT32. Initial new mode requires absent/empty; reject nonempty.
+- name: k_nope_clip_alpha
+  role: tensor
+  dtype_set:
+  - float32
+  rank_range:
+  - 1
+  - 1
+  layout: ND
+  shape:
+    symbolic:
+    - 1
+  optional: true
+attributes:
+- name: weight_quant_mode
+  type: int64
+  semantics: This extension allocates 6 = MXFP4_FULL_QUANT; upstream 0..5 unchanged;
+    6 is not supported by the upstream baseline.
+  default: 6
+- name: kv_cache_quant_mode
+  type: int64
+  semantics: Target scope {0 BF16,3 existing FP8 per-tile}; physical cache contract
+    needs full source lock.
+  default: 0
+- name: query_quant_mode
+  type: int64
+  semantics: Only 0 in new mode.
+  default: 0
+- name: query_norm_flag
+  type: bool
+  semantics: 'IR flag: emit BF16 RMSNorm result before FP4 requantization; ACLNN derives
+    from optional output.'
+  default: true
+- name: cache_mode
+  type: string
+  semantics: Only PA_BSND targeted. NoPE still gated in VA.
+  default: PA_BSND
+- name: ckvkr_repo_mode
+  type: int64
+  semantics: Preserve existing mode-dependent repository/tile semantics; not an MXFP4
+    cache attribute.
+- name: quant_scale_repo_mode
+  type: int64
+  semantics: Preserve existing mode-dependent repository/tile semantics; not an MXFP4
+    cache attribute.
+- name: tile_size
+  type: int64
+  semantics: Preserve existing mode-dependent repository/tile semantics; not an MXFP4
+    cache attribute.
+- name: rmsnorm_epsilon_cq
+  type: float32
+  semantics: Positive RMSNorm epsilon; public ACLNN is double. No invented default.
+- name: rmsnorm_epsilon_ckv
+  type: float32
+  semantics: Positive RMSNorm epsilon; public ACLNN is double. No invented default.
+- name: qc_qr_scale
+  type: float32
+  semantics: First VA deployment scope is 1; retain existing scale placement semantics.
+  default: 1.0
+- name: kc_scale
+  type: float32
+  semantics: First VA deployment scope is 1; retain existing scale placement semantics.
+  default: 1.0
+outputs:
+- name: query
+  shape_rule_kind: numpy_expr
+  shape_rule: query.shape = (token_x.shape[0], weight_uk.shape[0], weight_uk.shape[2])
+  dtype_rule_kind: numpy_expr
+  dtype_rule: query.dtype = weight_uk.dtype
+  layout: ND
+  aliasing: none
+- name: query_rope
+  shape_rule_kind: numpy_expr
+  shape_rule: query_rope.shape = (token_x.shape[0], weight_uk.shape[0], rope_sin.shape[1])
+  dtype_rule_kind: numpy_expr
+  dtype_rule: query_rope.dtype = weight_uk.dtype
+  layout: ND
+  aliasing: none
+- name: kv_cache_out
+  shape_rule_kind: numpy_expr
+  shape_rule: kv_cache_out.shape = kv_cache.shape
+  dtype_rule_kind: numpy_expr
+  dtype_rule: kv_cache_out.dtype = kv_cache.dtype
+  layout: ND
+  aliasing: inplace_with(kv_cache)
+- name: kr_cache_out
+  shape_rule_kind: numpy_expr
+  shape_rule: kr_cache_out.shape = kr_cache.shape
+  dtype_rule_kind: numpy_expr
+  dtype_rule: kr_cache_out.dtype = kr_cache.dtype
+  layout: ND
+  aliasing: inplace_with(kr_cache)
+- name: dequant_scale_q_nope
+  shape_rule_kind: numpy_expr
+  shape_rule: dequant_scale_q_nope.shape = (0,)
+  dtype_rule_kind: numpy_expr
+  dtype_rule: dequant_scale_q_nope.dtype = np.float32
+  layout: ND
+  aliasing: none
+  description: Empty output; query_quant_mode=0. Dtype of unused empty storage must
+    be reconciled with binding before lock.
+- name: query_norm
+  shape_rule_kind: numpy_expr
+  shape_rule: query_norm.shape = (token_x.shape[0], weight_dq.shape[1]) if query_norm_flag
+    else (0,)
+  dtype_rule_kind: numpy_expr
+  dtype_rule: query_norm.dtype = weight_uk.dtype
+  layout: ND
+  aliasing: none
+  description: BF16 pre-MXFP4-requantization RMSNorm result, not FP4 dequantized data.
+- name: dequant_scale_q_norm
+  shape_rule_kind: numpy_expr
+  shape_rule: dequant_scale_q_norm.shape = (0,)
+  dtype_rule_kind: numpy_expr
+  dtype_rule: dequant_scale_q_norm.dtype = np.float32
+  layout: ND
+  aliasing: none
+  description: Empty output; query_quant_mode=0. Dtype of unused empty storage must
+    be reconciled with binding before lock.
+reduction:
+  axis_source: fixed
+  fixed_value: -1
+shape_constraints:
+  symbols:
+    T:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    He:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Hcq:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Nout:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    N:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    D:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Hckv:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    HckvDr:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Dr:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Pages:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    Block:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    CacheWidth:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    KrPages:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    KrBlock:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    KrWidth:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    HeGroups:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    HcqGroups:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    CkvScaleElements:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    CkrScaleElements:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+    SeqCount:
+      kind: dim
+      range:
+      - 1
+      - 2147483647
+  global_constraints:
+  - He % 32 == 0
+  - Hcq % 32 == 0
+  - HeGroups == He // 32
+  - HcqGroups == Hcq // 32
+  - Nout == N * (D + Dr)
+  - HckvDr == Hckv + Dr
+  - He in [1024,2048,3072,4096,5120,6144,7168,7680,8192]
+  - Hcq in [1536,2048]
+  - Hckv == 512
+  - Dr == 64
+  - D in [128,192]
+  - 1 <= N <= 128
+  - 16 <= Block <= 1024
+  - Block % 16 == 0
+  - He % 64 == 0
+  - Hcq % 64 == 0
+  notes:
+  - These are existing V3 shape constraints from CheckBaseShape/CheckHcqSize/CheckDSize;
+    new kernel T routing must be tested independently.
+  - A4W4 NZ C0=64, storage [N/64,K/16,16,64] logical FP4 elements, two values per
+    byte.
+  - Four scales are ND contiguous [Nout,K/32], adjacent K32 scales form a pair. Not
+    QuantMatmul nontransposed [K/64,Nout,2].
+  - KV0 cache [Pages,Block,1,512] BF16; kr [Pages,Block,1,64] BF16. KV3 cache [Pages,Block,1,656]
+    FLOAT8_E4M3FN container; kr BF16[0]; tile_size=128 and both repo modes=1.
+  - 'cache_index values: -1 sentinel or [0,Pages*Block). Host does not read device
+    slot values; invalid positive values are caller contract violations, not promised
+    host exceptions.'
+dtype_policy:
+  promotion: fixed
+  accumulator_dtype: float32
+  supported_combinations:
+  - inputs:
+      token_x: float4_e2m1
+      weight_dq: float4_e2m1
+      weight_uq_qr: float4_e2m1
+      weight_uk: bfloat16
+      weight_dkv_kr: float4_e2m1
+      rmsnorm_gamma_cq: bfloat16
+      rmsnorm_gamma_ckv: bfloat16
+      rope_sin: bfloat16
+      rope_cos: bfloat16
+      kv_cache: bfloat16
+      kr_cache: bfloat16
+      cache_index: int64
+      dequant_scale_x: float8_e8m0
+      dequant_scale_w_dq: float8_e8m0
+      dequant_scale_w_uq_qr: float8_e8m0
+      dequant_scale_w_dkv_kr: float8_e8m0
+      quant_scale_ckv: float32
+      quant_scale_ckr: float32
+      smooth_scales_cq: float32
+      actual_seq_len: int32
+      k_nope_clip_alpha: float32
+    outputs:
+      query: bfloat16
+      query_rope: bfloat16
+      kv_cache_out: bfloat16
+      kr_cache_out: bfloat16
+      dequant_scale_q_nope: float32
+      query_norm: bfloat16
+      dequant_scale_q_norm: float32
+  - inputs:
+      token_x: float4_e2m1
+      weight_dq: float4_e2m1
+      weight_uq_qr: float4_e2m1
+      weight_uk: bfloat16
+      weight_dkv_kr: float4_e2m1
+      rmsnorm_gamma_cq: bfloat16
+      rmsnorm_gamma_ckv: bfloat16
+      rope_sin: bfloat16
+      rope_cos: bfloat16
+      kv_cache: float8_e4m3fn
+      kr_cache: bfloat16
+      cache_index: int64
+      dequant_scale_x: float8_e8m0
+      dequant_scale_w_dq: float8_e8m0
+      dequant_scale_w_uq_qr: float8_e8m0
+      dequant_scale_w_dkv_kr: float8_e8m0
+      quant_scale_ckv: float32
+      quant_scale_ckr: float32
+      smooth_scales_cq: float32
+      actual_seq_len: int32
+      k_nope_clip_alpha: float32
+    outputs:
+      query: bfloat16
+      query_rope: bfloat16
+      kv_cache_out: float8_e4m3fn
+      kr_cache_out: bfloat16
+      dequant_scale_q_nope: float32
+      query_norm: bfloat16
+      dequant_scale_q_norm: float32
+broadcast:
+  kind: none
+math_semantics:
+  formula_kind: textual_only
+  formula: 'D4(P,S) decodes logical E2M1 values and multiplies one E8M0 scale per
+    K32 group.
+
+    Zq = BF16(D4(token_x,dequant_scale_x) @ D4(weight_dq,dequant_scale_w_dq)); FP32
+    Cube accumulation then F322BF16 Fixpipe.
+
+    Cq = BF16(RMSNorm(Zq,rmsnorm_gamma_cq,rmsnorm_epsilon_cq)); query_norm=Cq if query_norm_flag
+    else empty.
+
+    Iq,Sq = Q4(Cq), with the same block/round rules as the actual npu_dynamic_mx_quant
+    producer.
+
+    U = BF16(D4(Iq,Sq) @ D4(weight_uq_qr,dequant_scale_w_uq_qr)); split by N,D,Dr.
+
+    query = BF16(U_nope @ weight_uk), query_rope = BF16(RoPE(U_rope,rope_sin,rope_cos)).
+
+    Zkv = BF16(D4(token_x,dequant_scale_x) @ D4(weight_dkv_kr,dequant_scale_w_dkv_kr));
+    split Hckv and Dr.
+
+    K = RMSNorm(Zkv_latent,rmsnorm_gamma_ckv,rmsnorm_epsilon_ckv); Kr=RoPE(Zkv_rope,rope_sin,rope_cos).
+
+    Preserve existing qc_qr_scale,kc_scale placements (first scope both 1).
+
+    Scatter K,Kr through cache_index to kv_cache,kr_cache using existing kv_cache_quant_mode,
+    ckvkr_repo_mode,
+
+    quant_scale_repo_mode,tile_size,quant_scale_ckv,quant_scale_ckr,k_nope_clip_alpha,actual_seq_len
+    contracts.
+
+    smooth_scales_cq must not be silently applied to MXFP4; unsupported nonempty values
+    require rejection.
+
+    dequant_scale_q_norm and dequant_scale_q_nope are empty in the target query mode.
+
+    This is a non-executable draft: unresolved Q4 rounding/NZ/cache details are explicitly
+    not certified by formula smoke testing.
+
+    Q4 locks scaleAlg=0 OCP, K32, emax exponent 2, hardware CAST_ROUND E2M1.
+
+    Use the source ComputeScaleOCP and ComputeDataMxfp4General rules, including NaN/Inf
+    scale 0xff,
+
+    sharedExp==0 reciprocal zero, saturation/subnormal/tie semantics of hardware Cast.
+
+    Do not substitute NumPy round for hardware CAST_ROUND.
+
+    The three FP4 GEMMs accumulate FP32 and materialize BF16 before RMSNorm, Q split/RoPE
+    or later BF16 matmul,
+
+    matching native QuantMatmul output dtype. query_norm copies pre-Q4 BF16 Cq into
+    an independent GM output.
+
+
+    actual_seq_len must be absent/empty (IR INT32); nonempty is rejected by the new
+    mode. Cache slot -1 is skip-write; other slots require 0<=slot<Pages*Block. Host
+    does not promise value-range errors for device cache_index.
+
+    '
+  reference_oracle:
+    framework: torch
+    available_for_dtype:
+    - float4_e2m1
+    absent: true
+    reason: No verified single callable equivalent to new fused MXFP4 Prolog; native
+      torch_npu composition needs A5. Do not use torch.matmul alone as oracle.
+  invariants:
+  - name: zero_hidden_query
+    kind: equals_when_input_is_zero
+    input: token_x
+    output: query
+    value: 0
+    preconditions: Finite weights/scales, positive eps, canonical zero handling; excludes
+      untouched cache entries.
+  composition:
+    primitives:
+    - id: decode
+      op: mx_dequantize
+      inputs:
+      - token_x
+      - weight_dq
+      - weight_uq_qr
+      - weight_dkv_kr
+      - dequant_scale_x
+      - dequant_scale_w_dq
+      - dequant_scale_w_uq_qr
+      - dequant_scale_w_dkv_kr
+      outputs:
+      - x_dec
+      - wdq_dec
+      - wuq_dec
+      - wkv_dec
+    - id: down_q
+      op: gemm
+      inputs:
+      - x_dec
+      - wdq_dec
+      outputs:
+      - zq
+    - id: norm_q
+      op: rms_norm
+      inputs:
+      - zq
+      - rmsnorm_gamma_cq
+      outputs:
+      - cq
+    - id: retain_norm
+      op: cast
+      inputs:
+      - cq
+      outputs:
+      - query_norm
+    - id: quant_q
+      op: mx_quantize
+      inputs:
+      - cq
+      outputs:
+      - iq
+      - sq
+    - id: up_q
+      op: mx_gemm
+      inputs:
+      - iq
+      - sq
+      - wuq_dec
+      - weight_uk
+      - rope_sin
+      - rope_cos
+      outputs:
+      - query
+      - query_rope
+    - id: down_kv
+      op: gemm
+      inputs:
+      - x_dec
+      - wkv_dec
+      outputs:
+      - zkv
+    - id: kv_norm_rope_scatter
+      op: scatter_update
+      inputs:
+      - zkv
+      - rmsnorm_gamma_ckv
+      - rope_sin
+      - rope_cos
+      - cache_index
+      - kv_cache
+      - kr_cache
+      - quant_scale_ckv
+      - quant_scale_ckr
+      - actual_seq_len
+      - k_nope_clip_alpha
+      outputs:
+      - kv_cache_out
+      - kr_cache_out
+    dataflow:
+      intermediates:
+      - x_dec
+      - wdq_dec
+      - wuq_dec
+      - wkv_dec
+      - zq
+      - cq
+      - iq
+      - sq
+      - zkv
+      no_leak: true
+  contract_open_items:
+  - Dedicated decoded-reference plus A5 hardware quant/native oracle execution
+  - New kernel T routing boundary verification
+  - Actual CANN/torch_npu version and hardware tolerance/performance results
+  status: 'Draft only: semantic primitives intentionally use honest names unsupported
+    by current generic registry; do not disguise them as elementwise_unary for a false
+    PASS.'
+  source_contract:
+    ops_nn_ref: 2a77283db46e6648ff47bc8277442cf9c721e3c2
+    nz: 'matmul/quant_batch_matmul_v3/op_api/quant_matmul_v4_common.h::SelectNzK0Value/GetWeightNzShape:
+      A4W4 C0=64, non-transposed weight logical [K,N] storage [N/64,K/16,16,64] logical
+      FP4 elements (half-byte each); do not apply A8W4 C0=32.'
+    quant: norm/rms_norm_dynamic_mx_quant/op_kernel/arch35/rms_norm_dynamic_mx_quant_common.h::ComputeScaleOCP/ComputeDataMxfp4General;
+      quant/dynamic_mx_quant/docs/aclnnDynamicMxQuant.md
+    scales: GM logical [T,K/32] uint8 E8M0 bit storage. L1 pair of E8M0 bytes reinterpreted
+      BF16 for Dn2Nz; LoadDataMX yStep=K/64. This is a storage reinterpretation, not
+      numerical BF16 scale.
+    tiling: New semantic combination enum16/17 may use SCENARIO=3 plus existing QUANT_MODE
+      low field0/1 for KV0/3. Preserve old field bit positions; verify host/device
+      dispatch and shared V1-V4 regressions.
+    cache: ops-transformer@632dddba attention/mla_prolog/op_host/mla_prolog_tiling_check.cpp
+      CheckBaseShape/CheckHcqSize/CheckDSize/GenActualParamInfo/CheckSpecialScenarParamInfo;
+      PA_BSND KV3 Dtile=512+64*2+512/128*4=656.
+numerical_stability:
+  required: false
+  techniques: []
+  affects_invariants: false
+numerical_tolerance:
+  source: REQUIREMENTS.md section 4.4 proposal; not hardware calibrated
+  per_dtype:
+    bfloat16:
+      rtol: 0.015625
+      atol: 0.015625
+      metric: max_relative
+    float32:
+      rtol: 0
+      atol: 0
+      metric: bitwise_equal
+    float8_e4m3fn:
+      rtol: 0.25
+      atol: 0.0625
+      metric: max_relative
+boundary_conditions:
+- case: rank=0 is invalid
+  synthesize:
+    token_x.shape: '[]'
+  machine_check:
+    kind: raises_error
+    error_type: shape_mismatch
+- case: reduce axis length 1 violates K32
+  synthesize:
+    token_x.shape: '[1,1]'
+  machine_check:
+    kind: raises_error
+    error_type: shape_mismatch
+- case: empty input unsupported in initial draft
+  synthesize:
+    token_x.shape: '[0,32]'
+  machine_check:
+    kind: raises_error
+    error_type: shape_mismatch
+  tags:
+  - empty_tensor
+- case: K=0 unsupported
+  synthesize:
+    token_x.shape: '[1,0]'
+  machine_check:
+    kind: raises_error
+    error_type: shape_mismatch
+- case: K dimension mismatch
+  tags:
+  - k_mismatch_raises
+  synthesize:
+    token_x.shape: '[1,32]'
+    weight_dq.shape: '[64,64]'
+  machine_check:
+    kind: raises_error
+    error_type: shape_mismatch
+extreme_inputs:
+- case: 'zero_input: finite zero token input makes query zero with canonical MX zero
+    policy'
+  tags:
+  - zero_input
+  synthesize:
+    shapes:
+      token_x: '[1,32]'
+    patterns:
+    - pattern: all_zero
+      target: token_x
+  machine_check:
+    kind: equals
+    value: 0
+determinism:
+  required: true
+  accumulation_order: tree
+  bitwise_reproducible: false

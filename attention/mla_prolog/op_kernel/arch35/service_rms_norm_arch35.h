@@ -21,6 +21,7 @@
 
 #include "vf/vf_rms_norm.h"
 #include "vf/vf_dynamic_quant.h"
+#include "vf/vf_dynamic_quant_mxfp4.h"
 
 namespace MlaProlog {
 

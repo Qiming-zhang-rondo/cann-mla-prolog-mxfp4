@@ -26,6 +26,7 @@
 #include <sstream>
 #include <algorithm>
 #include <unordered_set>
+#include "graph/types.h"
 #include "register/tilingdata_base.h"
 #include "tiling/tiling_api.h"
 #include "op_host/data_copy_transpose_tiling.h"
@@ -194,7 +195,9 @@ enum class QUANT_MODE : int8_t {
     HIF8_FULL_QUANT_KV_NO_QUANT = 12,
     HIF8_FULL_QUANT_KV_QUANT_PER_TENSOR = 13,
     FP8_FULL_QUANT_KV_QUANT_PER_TILE = 14,
-    HIF8_FULL_QUANT_KV_QUANT_PER_TILE = 15
+    HIF8_FULL_QUANT_KV_QUANT_PER_TILE = 15,
+    MXFP4_FULL_QUANT_KV_NO_QUANT = 16,
+    MXFP4_FULL_QUANT_KV_QUANT_PER_TILE = 17
 };
 
 enum class WEIGHT_QUANT_MODE : uint8_t {
@@ -203,7 +206,8 @@ enum class WEIGHT_QUANT_MODE : uint8_t {
     FULL_QUANT = 2,
     MXFP8_FULL_QUANT = 3,
     FP8_FULL_QUANT = 4,
-    HIF8_FULL_QUANT = 5
+    HIF8_FULL_QUANT = 5,
+    MXFP4_FULL_QUANT = 6
 };
 
 enum class KV_QUANT_MODE : uint8_t {
@@ -213,7 +217,14 @@ enum class KV_QUANT_MODE : uint8_t {
     PER_TILE = 3
 };
 
-// weightQuantMode(0-5) × kvQuantMode(0-3) → QUANT_MODE 双重哈希查找表
+// FP4 descriptors count logical nibbles: a 32-byte NZ row stores 64 E2M1 values.
+// Keep byte-size arithmetic for all existing dtypes unchanged.
+inline uint32_t GetMlaWeightNzC0(ge::DataType dtype)
+{
+    return dtype == ge::DT_FLOAT4_E2M1 ? 64U : 32U / ge::GetSizeByDataType(dtype);
+}
+
+// weightQuantMode(0-6) × kvQuantMode(0-3) → QUANT_MODE 双重哈希查找表
 // 外层 Key 是 weightQuantMode，内层 Key 是 kvQuantMode，Value 是 QUANT_MODE
 // 只存放合法组合，查不到即非法（含越界与组合非法）
 inline const std::unordered_map<int, std::unordered_map<int, QUANT_MODE>> QUANT_MODE_HASH_TABLE = {
@@ -243,13 +254,17 @@ inline const std::unordered_map<int, std::unordered_map<int, QUANT_MODE>> QUANT_
     {5,
      {{0, QUANT_MODE::HIF8_FULL_QUANT_KV_NO_QUANT},
       {1, QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TENSOR},
-      {3, QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE}}}};
+      {3, QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE}}},
+    // wq=6 MXFP4: V3 A5 only, BF16 query and KV {0, 3}
+    {6, {{0, QUANT_MODE::MXFP4_FULL_QUANT_KV_NO_QUANT},
+         {3, QUANT_MODE::MXFP4_FULL_QUANT_KV_QUANT_PER_TILE}}}};
 
 // 各 weightQuantMode 下合法 kvQuantMode 集合说明（用于错误日志 reason 文本，与原实现逐字一致）
 inline const std::unordered_map<int, const char *> VALID_KV_REASON_TABLE = {
     {0, "When weightQuantMode==0, must be {0}"},       {1, "When weightQuantMode==1, must be {0, 2, 3}"},
     {2, "When weightQuantMode==2, must be {0, 1, 3}"}, {3, "When weightQuantMode==3, must be {0, 1, 3}"},
-    {4, "When weightQuantMode==4, must be {0, 1, 3}"}, {5, "When weightQuantMode==5, must be {0, 1, 3}"}};
+    {4, "When weightQuantMode==4, must be {0, 1, 3}"}, {5, "When weightQuantMode==5, must be {0, 1, 3}"},
+    {6, "When weightQuantMode==6, must be {0, 3}"}};
 
 // QUANT_MODE → (weightQuantMode, kvQuantMode) 反向映射表
 // 用于从 quantMode_ 反推 wq/kvq，V1/V2（按 dtype 推断 quantMode_）与 V3（正向查表得 quantMode_）通用
@@ -271,7 +286,9 @@ inline const std::unordered_map<QUANT_MODE, std::pair<WEIGHT_QUANT_MODE, KV_QUAN
     {QUANT_MODE::FP8_FULL_QUANT_KV_QUANT_PER_TILE, {WEIGHT_QUANT_MODE::FP8_FULL_QUANT, KV_QUANT_MODE::PER_TILE}},
     {QUANT_MODE::HIF8_FULL_QUANT_KV_NO_QUANT, {WEIGHT_QUANT_MODE::HIF8_FULL_QUANT, KV_QUANT_MODE::NO_QUANT}},
     {QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TENSOR, {WEIGHT_QUANT_MODE::HIF8_FULL_QUANT, KV_QUANT_MODE::PER_TENSOR}},
-    {QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE, {WEIGHT_QUANT_MODE::HIF8_FULL_QUANT, KV_QUANT_MODE::PER_TILE}}};
+    {QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE, {WEIGHT_QUANT_MODE::HIF8_FULL_QUANT, KV_QUANT_MODE::PER_TILE}},
+    {QUANT_MODE::MXFP4_FULL_QUANT_KV_NO_QUANT, {WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT, KV_QUANT_MODE::NO_QUANT}},
+    {QUANT_MODE::MXFP4_FULL_QUANT_KV_QUANT_PER_TILE, {WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT, KV_QUANT_MODE::PER_TILE}}};
 
 enum class QUERY_QUANT_MODE : uint8_t {
     NO_QUANT = 0,

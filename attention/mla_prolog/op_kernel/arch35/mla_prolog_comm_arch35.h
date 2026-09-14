@@ -53,7 +53,8 @@ enum class CACHE_MODE : uint8_t {
 enum class SCENARIO : uint8_t {
     RESERVED = static_cast<uint8_t>(0),
     NO_QUANT = static_cast<uint8_t>(1),
-    QUANT = static_cast<uint8_t>(2)
+    QUANT = static_cast<uint8_t>(2),
+    MXFP4 = static_cast<uint8_t>(3)
 };
 
 enum class QUANT_MODE : uint8_t {
@@ -152,6 +153,8 @@ class NoneType {};
 using FP8E4M3 = fp8_e4m3fn_t;
 
 using FP8E8M0 = fp8_e8m0_t;
+
+using FP4E2M1 = fp4x2_e2m1_t;
 
 using HIF8 = hifloat8_t;
 
@@ -461,6 +464,7 @@ __aicore__ constexpr bool IsFullQuantMode()
     } else {
         // Pattern B: INT8 ‖ FP8E4M3 ‖ HIF8
         return std::is_same<INPUT_T, int8_t>::value || std::is_same<INPUT_T, FP8E4M3>::value ||
+               std::is_same<INPUT_T, FP4E2M1>::value ||
                std::is_same<INPUT_T, HIF8>::value;
     }
 }

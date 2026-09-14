@@ -19,6 +19,7 @@
 #include "mla_prolog_comm_arch35.h"
 #include "mla_prolog_vector_comm_arch35.h"
 #include "service_matmul_arch35.h"
+#include "service_matmul_mxfp4_arch35.h"
 #include "service_rms_norm_arch35.h"
 #include "service_gather_sin_cos_arch35.h"
 #include "service_rotary_position_embedding_arch35.h"
@@ -203,6 +204,7 @@ private:
     bool enableSmoothScalesCq_;
     static constexpr uint32_t cvMode = MLAPT::cvRatio; // 编译态，默认cv1:2
     static constexpr bool isFp8E8m0 = std::is_same<dequantScaleType, FP8E8M0>::value;
+    static constexpr bool isMxFp4 = std::is_same<mmInputType, FP4E2M1>::value;
     uint32_t cvRatio_ = 2U; // 默认cv 1:2
 
     struct DequantTool {
@@ -242,6 +244,7 @@ private:
     GlobalTensor<float> kNopeClipAlphaGm_;
 
     GlobalTensor<rmsNormCqOutputType> rmsNormCqResGm_;
+    GlobalTensor<bfloat16_t> queryNormBf16Gm_;
     GlobalTensor<mmCqOutputType> mmCqResGm_;
     GlobalTensor<mmCkvKrOutputType> mmCkvKrResGm_;
     GlobalTensor<mmQcQrOutputType> mmQcQrResGm_;
@@ -371,8 +374,12 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::OutputInit(__gm__ uint8_t *qu
         mmQnResGm_.SetGlobalBuffer((__gm__ mmQnOutputType *)queryOut);
     }
     if (baseParams_->queryNormFlag == 1U) {
-        rmsNormCqResGm_.SetGlobalBuffer((__gm__ mmQcQrInputType *)queryNormOut);
-        if constexpr (IsFullQuantMode<mmQcQrInputType, dequantScaleType, false>()) {
+        if constexpr (isMxFp4) {
+            queryNormBf16Gm_.SetGlobalBuffer((__gm__ bfloat16_t *)queryNormOut);
+        } else {
+            rmsNormCqResGm_.SetGlobalBuffer((__gm__ mmQcQrInputType *)queryNormOut);
+        }
+        if constexpr (!isMxFp4 && IsFullQuantMode<mmQcQrInputType, dequantScaleType, false>()) {
             dequantScaleQNormGm_.SetGlobalBuffer((__gm__ dequantScaleQNormType *)dequantScaleQNormOut);
         }
     }
@@ -395,7 +402,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::ScaleInit(
         deqScaleQcQrW_.SetGlobalBuffer((__gm__ dequantScaleType *)deqScaleQcQrW);
         quantScaleCkvGm_.SetGlobalBuffer((__gm__ float *)quantScaleCkv);
         quantScaleCkrGm_.SetGlobalBuffer((__gm__ float *)quantScaleCkr);
-    } else if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+    } else if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         deqScaleQcQrW_.SetGlobalBuffer((__gm__ dequantScaleType *)deqScaleQcQrW);
         quantScaleCkvGm_.SetGlobalBuffer((__gm__ float *)quantScaleCkv);
     }
@@ -432,7 +439,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MmCqParamInit()
     mmCqParam_.orgKc = baseParams_->headSizeCq; // 1536
     mmCqParam_.baseK =
         (sizeof(mmInputType) == ONE_BYTE_TYPE_SIZE) ? 256 : 128; // 128KB / (128 max baseN * 4 stepK * sizeof(type))
-    mmCqParam_.baseN = (std::is_same<mmInputType, FP8E4M3>::value && isFp8E8m0) ? 64 : 128;
+    mmCqParam_.baseN = ((std::is_same<mmInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) ? 64 : 128;
     mmCqParam_.stepK = 4;
     if ((mmCqParam_.k / mmCqParam_.baseK) % mmCqParam_.stepK != 0) {
         mmCqParam_.stepK = 3; // support k = 7680, mmInputType int8, no tail
@@ -496,7 +503,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MmQcQrParamInit()
     if constexpr (MLAPT::enableGroupComputeOpt) {
         mmQcQrParam_.baseN = 128;
     } else {
-        if constexpr (std::is_same<mmInputType, FP8E4M3>::value &&
+        if constexpr ((std::is_same<mmInputType, FP8E4M3>::value || isMxFp4) &&
                       isFp8E8m0) { // FP8全量化场景下L1B用满，修改baseN会造成内存踩踏
             mmQcQrParam_.baseN = 128;
         } else {
@@ -521,7 +528,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MmQnParamInit()
     mmQnParam_.needSetOrgShape = 1;
     mmQnParam_.orgM = mmQnParam_.m;
     mmQnParam_.orgN = mmQnParam_.n;
-    if constexpr (std::is_same<mmQcQrOutputType, int32_t>::value || std::is_same<mmQcQrOutputType, float>::value) {
+    if constexpr (std::is_same<mmQcQrOutputType, int32_t>::value || (std::is_same<mmQcQrOutputType, float>::value || isMxFp4)) {
         mmQnParam_.orgKa = baseParams_->headSizeQc;
     } else {
         mmQnParam_.orgKa = baseParams_->headSizeQc + baseParams_->headSizeQr;
@@ -687,7 +694,7 @@ template <typename MLAPT>
 __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::WorkspaceInit(__gm__ uint8_t *workspace)
 {
     int64_t workspaceOffset = 0;
-    if constexpr (std::is_same<rmsNormCqOutputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<rmsNormCqOutputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         dequantScaleCqSize_ = baseParams_->headSizeCq / FP8_E4M3_BLOCK_SIZE;
     }
     dequantScaleCqSize_ = Align(dequantScaleCqSize_, BYTE_BLOCK);
@@ -703,7 +710,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::WorkspaceInit(__gm__ uint8_t 
 
     mmCqResGm_.SetGlobalBuffer((__gm__ mmCqOutputType *)(workspace + workspaceOffset));
 
-    if (baseParams_->queryNormFlag == 0U) {
+    if (baseParams_->queryNormFlag == 0U || isMxFp4) {
         // 全量化场景下`mmCqResGm_`与`rmsNormCqResGm_`的dtype不同，无法共用workspace，此处需要偏移`mmCqResGm_`占用的大小；
         if constexpr (!std::is_same<rmsNormCqOutputType, mmCqOutputType>::value) {
             workspaceOffset += static_cast<int64_t>(baseParams_->stepBatchSize) *
@@ -713,7 +720,8 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::WorkspaceInit(__gm__ uint8_t 
         // 不返回queryNorm时，rmsNormCq结果放在workspace
         rmsNormCqResGm_.SetGlobalBuffer((__gm__ rmsNormCqOutputType *)(workspace + workspaceOffset));
         workspaceOffset += static_cast<int64_t>(baseParams_->stepBatchSize) *
-                           static_cast<int64_t>(baseParams_->headSizeCq) * sizeof(rmsNormCqOutputType);
+                           (isMxFp4 ? static_cast<int64_t>(baseParams_->headSizeCq) / 2 :
+                            static_cast<int64_t>(baseParams_->headSizeCq) * sizeof(rmsNormCqOutputType));
     } else {
         // 返回queryNorm时，rmsNormCq结果直接输出gm，此处需要偏移`mmCqResGm_`占用的大小
         workspaceOffset += static_cast<int64_t>(baseParams_->stepBatchSize) *
@@ -859,7 +867,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::AicProcess(AicOffset &aicOffs
     GlobalTensor<dequantScaleType> scaleAGm{};
     GlobalTensor<dequantScaleType> scaleBGmDq{};
     GlobalTensor<dequantScaleType> scaleBGmDkvKr{};
-    if constexpr (std::is_same<mmInputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<mmInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         scaleAGm = dequantScaleXGm_[dequantScaleXOffset];
         scaleBGmDq = dequantScaleWDqGm_[aicOffset.dequantScaleWDqOffset];
         scaleBGmDkvKr = dequantScaleWDkvkrGm_[aicOffset.dequantScaleWDkvKrOffset];
@@ -880,18 +888,18 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::AicProcess(AicOffset &aicOffs
     CrossCoreSetFlag<SYNC_MODE_CUBE_VEC, PIPE_FIX>(FINISH_MM_CKVKR);
     CrossCoreWaitFlag(FINISH_VEC_RMSNORM_CQ);
 
-    if constexpr (std::is_same<mmInputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<mmInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         MatmulQcQr(aicOffset);
     } else {
         MatmulAndSyncQcQr(aicOffset);
     }
-    if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         WaitFlag<HardEvent::MTE1_MTE2>(SCALE_EVENT); // FP8场景下Scale不做db，需要等scale用完才能做mmQn
     }
     PreloadQnAndSync(aicOffset, mmQnLoops);
     MatmulQnSyncDynamicQuantAndMulQr<needQnDynamicQuant>(aicOffset.qcOffset, aicOffset.weightUkOffset,
                                                          aicOffset.qnResOffset, mmQnLoops);
-    if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         SetFlag<HardEvent::MTE1_MTE2>(SCALE_EVENT); // FP8场景下Scale不做db，需要mmQn用完才能做下一轮
     }
     if constexpr (!needQnDynamicQuant) {
@@ -900,7 +908,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::AicProcess(AicOffset &aicOffs
                                  static_cast<int64_t>(baseParams_->headSizeCkv) *
                                  static_cast<int64_t>(baseParams_->numHeadSize);
     }
-    if (unlikely(baseParams_->queryNormFlag == 1U)) {
+    if (unlikely(baseParams_->queryNormFlag == 1U) && !isMxFp4) {
         aicOffset.rmsNormCqResOffset +=
             static_cast<int64_t>(baseParams_->stepBatchSize) * static_cast<int64_t>(baseParams_->headSizeCq);
     }
@@ -914,7 +922,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::AivProcess(AivOffset &aivOffs
 {
     int64_t tokenIndex = batchOffset + aivOffset.curBlockTokenOffset;
     int64_t rmsNormCqResOffset =
-        baseParams_->queryNormFlag == 1U ? tokenIndex * baseParams_->headSizeCq : aivOffset.rmsNormCqOffset;
+        (baseParams_->queryNormFlag == 1U && !isMxFp4) ? tokenIndex * baseParams_->headSizeCq : aivOffset.rmsNormCqOffset;
 
     if (batchOffset == 0) {
         // 只需要搬运一次
@@ -979,7 +987,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::ComputeAicOffset(AicOffset &a
     }
 
     if (cubeBlockIdx_ < baseParams_->mm4BlockNum) {
-        if constexpr (std::is_same<mmQcQrOutputType, int32_t>::value || std::is_same<mmQcQrOutputType, float>::value) {
+        if constexpr (std::is_same<mmQcQrOutputType, int32_t>::value || (std::is_same<mmQcQrOutputType, float>::value || isMxFp4)) {
             aicOffset.qcOffset = static_cast<int64_t>(baseParams_->dimHeadSizeQc) * numHeadOffset; // 128 * idx
         } else {
             aicOffset.qcOffset = static_cast<int64_t>(baseParams_->dimHeadSizeQc + baseParams_->dimHeadRope) *
@@ -1058,10 +1066,10 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulSplitN(
         return;
     }
     // 用于enableGroupComputeOpt场景
-    if constexpr (needCheckAFullLoad) {
+    if constexpr (needCheckAFullLoad && !isMxFp4) {
         constexpr uint32_t mSize =
             (sizeof(mmQcQrInputType) == sizeof(int8_t)) ? INT8_AFULLLOAD_MAX_MSIZE : BF16_AFULLLOAD_MAX_MSIZE;
-        bool isAFullLoad = (mmQcQrParam_.m <= mSize) ? true : false;
+        bool isAFullLoad = !isMxFp4 && (mmQcQrParam_.m <= mSize);
         if (isAFullLoad) {
             MatmulGroupComputeAFullLoad<T, O, S, isContinuousCopy>(tensorResGm, tensorAGm, tensorBGm, mmPara,
                                                                    bufParam_);
@@ -1076,8 +1084,13 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulSplitN(
         if (nL1 == nL1loops - 1) {
             subNL1SplitSize = nInput - (nL1loops - 1) * nL1SplitSize;
         }
-        MatmulSplitK<T, O, S>(tensorResGm, tensorAGm, tensorBGm, mmPara, bufParam_, nL1 * nL1SplitSize, subNL1SplitSize,
-                              tensorAScaleGm, tensorBScaleGm);
+        if constexpr (std::is_same<T, FP4E2M1>::value) {
+            MatmulMxFp4SplitK(tensorResGm, tensorAGm, tensorBGm, mmPara, bufParam_, nL1 * nL1SplitSize,
+                              subNL1SplitSize, tensorAScaleGm, tensorBScaleGm);
+        } else {
+            MatmulSplitK<T, O, S>(tensorResGm, tensorAGm, tensorBGm, mmPara, bufParam_, nL1 * nL1SplitSize,
+                                  subNL1SplitSize, tensorAScaleGm, tensorBScaleGm);
+        }
     }
 }
 
@@ -1112,14 +1125,16 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulQcQr(AicOffset &aicOffs
     // [32, 1536] * [1536, 32*(128+64)] = [32, 32*192]
     constexpr uint32_t mSize =
         (sizeof(mmQcQrInputType) == sizeof(int8_t)) ? INT8_AFULLLOAD_MAX_MSIZE : BF16_AFULLLOAD_MAX_MSIZE;
-    bool isAFullLoad = (mmQcQrParam_.m <= mSize) ? true : false;
+    bool isAFullLoad = !isMxFp4 && (mmQcQrParam_.m <= mSize);
 
     uint32_t nInput = mmQcQrParam_.n;
     uint32_t nL1SplitSize = mmQcQrParam_.baseN;
     uint32_t nL1loops = CeilDivT(nInput, nL1SplitSize);
     uint32_t subNL1SplitSize = nL1SplitSize;
-    if (isAFullLoad) {
-        MatmulQcQrLoadA(aicOffset);
+    if constexpr (!isMxFp4) {
+        if (isAFullLoad) {
+            MatmulQcQrLoadA(aicOffset);
+        }
     }
     MatmulQcQrSplitN(aicOffset, isAFullLoad, nInput, nL1SplitSize, nL1loops);
     if (isAFullLoad) {
@@ -1131,7 +1146,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulQcQr(AicOffset &aicOffs
 template <typename MLAPT>
 __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulQcQrLoadA(AicOffset &aicOffset)
 {
-    if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         uint32_t offsetL1B = L1_B_SIZE / 2 / sizeof(rmsNormCqOutputType); // 2表示scale起始地址固定从L1B上ping的64k开始
         WaitFlag<HardEvent::MTE1_MTE2>(SCALE_EVENT);
         LoadL1AAndScale<rmsNormCqOutputType, dequantScaleType, false, true>(
@@ -1156,7 +1171,14 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulQcQrSplitN(AicOffset &a
         if (nL1 == nL1loops - 1) {
             subNL1SplitSize = nInput - (nL1loops - 1) * nL1SplitSize;
         }
-        if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+        if constexpr (isMxFp4) {
+            MatmulMxFp4SplitK(mmQcQrResGm_[aicOffset.qcQrResOffset],
+                              rmsNormCqResGm_[aicOffset.rmsNormCqResOffset],
+                              weightUqQrGm_[aicOffset.weightUqQrOffset], mmQcQrParam_, bufParam_,
+                              nL1 * nL1SplitSize, subNL1SplitSize,
+                              dequantTool_.deQuantScaleCqGm_[aicOffset.dequantScaleCqOffset],
+                              deqScaleQcQrW_[aicOffset.dequantScaleWuqqrOffset], true);
+        } else if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
             if (isAFullLoad) {
                 MatmulSplitK<rmsNormCqOutputType, mmQcQrOutputType, dequantScaleType, true, true>(
                     mmQcQrResGm_[aicOffset.qcQrResOffset], rmsNormCqResGm_[aicOffset.rmsNormCqResOffset],
@@ -1272,7 +1294,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::MatmulQnSyncDynamicQuantAndMu
             }
         }
         if constexpr (std::is_same<mmQcQrOutputType, int32_t>::value || std::is_same<mmQcQrInputType, FP8E4M3>::value ||
-                      std::is_same<mmQcQrOutputType, float>::value) {
+                      (std::is_same<mmQcQrOutputType, float>::value || isMxFp4)) {
             qcOffset += static_cast<int64_t>(baseParams_->dimHeadSizeQc);
         } else {
             qcOffset += static_cast<int64_t>(baseParams_->dimHeadSizeQc + baseParams_->dimHeadRope);
@@ -1388,7 +1410,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::RmsNormCq(int64_t tokenIndex,
         return;
     }
     uint64_t dequantScaleXSize = 1;
-    if constexpr (std::is_same<rmsNormCqOutputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<rmsNormCqOutputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         dequantScaleXSize = baseParams_->headSizeX / FP8_E4M3_BLOCK_SIZE;
     }
     uint64_t dequantScaleCqElementNum = dequantScaleCqSize_ / sizeof(dequantScaleType);
@@ -1435,7 +1457,23 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::RmsNormCqProcess(
         baseParams_->qcQrScale,            // scale
         baseParams_->isQcQrScaleEnable,    // isScaleEnable
     };
-    if constexpr (IsFullQuantMode<rmsNormCqOutputType, dequantScaleType, false>()) {
+    if constexpr (isMxFp4) {
+        LocalTensor<bfloat16_t> normBf16 = shareTmpUb.ReinterpretCast<bfloat16_t>();
+        LocalTensor<uint8_t> normScratch = normBf16[baseParams_->headSizeCq].template ReinterpretCast<uint8_t>();
+        RmsNormNormal<mmCqOutputType, rmsNormGammaType, float, bfloat16_t, FP8E8M0>(
+            normBf16, mmCqResGm_[rmsNormCqOffset], rmsnormGammaCqLocal_, dequantScaleWDqLocal_,
+            dequantScaleXLocal, normScratch, rmsNormParams);
+        PipeBarrier<PIPE_V>();
+        DynamicQuantPerBlockMxfp4Vf(outputLocal, dequantScaleQcQr[scaleOffset], normBf16, normScratch,
+                                    baseParams_->headSizeCq);
+        if (baseParams_->queryNormFlag == 1U) {
+            SetFlag<HardEvent::V_MTE3>(EVENT_ID0);
+            WaitFlag<HardEvent::V_MTE3>(EVENT_ID0);
+            DataCopy(queryNormBf16Gm_[tokenIndex * baseParams_->headSizeCq], normBf16, baseParams_->headSizeCq);
+            SetFlag<HardEvent::MTE3_V>(EVENT_ID0);
+            WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
+        }
+    } else if constexpr (IsFullQuantMode<rmsNormCqOutputType, dequantScaleType, false>()) {
         RmsNormDynamicQuant<mmCqOutputType, rmsNormGammaType, float, rmsNormComputType, rmsNormCqOutputType,
                             dequantScaleType>(outputLocal, dequantScaleQcQr[scaleOffset], mmCqResGm_[rmsNormCqOffset],
                                               rmsnormGammaCqLocal_, smoothScaleCqLocal_, dequantScaleWDqLocal_,
@@ -1448,7 +1486,13 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::RmsNormCqProcess(
     SetFlag<HardEvent::V_MTE3>(EVENT_ID0);
     WaitFlag<HardEvent::V_MTE3>(EVENT_ID0);
     // RmsNorm(Cq)的结果拷进mmCqResGm_中，用于MatmulQcQr的A矩阵
+    if constexpr (isMxFp4) {
+        GlobalTensor<uint8_t> dstBytes;
+        dstBytes.SetGlobalBuffer((__gm__ uint8_t *)rmsNormCqResGm_[rmsNormCqResOffset].GetPhyAddr());
+        DataCopy(dstBytes, outputLocal.template ReinterpretCast<uint8_t>(), baseParams_->headSizeCq / 2);
+    } else {
     DataCopy(rmsNormCqResGm_[rmsNormCqResOffset], outputLocal, baseParams_->headSizeCq);
+    }
     SetFlag<HardEvent::MTE3_V>(EVENT_ID0);
     WaitFlag<HardEvent::MTE3_V>(EVENT_ID0);
     SetFlag<HardEvent::MTE3_MTE2>(EVENT_ID0);
@@ -1460,7 +1504,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::CopyDequantScaleCq(uint64_t d
                                                                       LocalTensor<dequantScaleType> &dequantScaleQcQr,
                                                                       int64_t curVecToken, int64_t curBlockTokenOffset)
 {
-    if constexpr (std::is_same<rmsNormCqOutputType, FP8E4M3>::value && isFp8E8m0) {
+    if constexpr ((std::is_same<rmsNormCqOutputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
         SetFlag<HardEvent::V_MTE3>(EVENT_ID0);
         WaitFlag<HardEvent::V_MTE3>(EVENT_ID0);
         DataCopy(dequantTool_.deQuantScaleCqGm_[curBlockTokenOffset * dequantScaleCqElementNum], dequantScaleQcQr,
@@ -1482,11 +1526,11 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::CopyQueryNormScale(int64_t st
                                                                       LocalTensor<dequantScaleType> &dequantScaleQcQr,
                                                                       int64_t curVecToken)
 {
-    if (unlikely(baseParams_->queryNormFlag == 1U)) {
+    if (unlikely(baseParams_->queryNormFlag == 1U) && !isMxFp4) {
         if constexpr (IsFullQuantMode<mmQcQrInputType, dequantScaleType, true>()) {
             DataCopyPad(dequantScaleQNormGm_[stepTokenIndex], dequantScaleQcQr,
                         {static_cast<uint16_t>(curVecToken), sizeof(dequantScaleQNormType), 0, 0});
-        } else if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+        } else if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
             DataCopyPad(
                 dequantScaleQNormGm_[stepTokenIndex *
                                      static_cast<uint16_t>((baseParams_->headSizeCq / FP8_E4M3_BLOCK_SIZE))],
@@ -1620,6 +1664,15 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::RmsNormAndQuantizeCkv(LocalTe
     RmsNormNormal<mmCkvKrOutputType, rmsNormGammaType, rmsNormComputType, float, dequantScaleType>(
         inputLocal, mmCkvKrResGm_[rmsNormAndScatterCkvParams.offset], rmsnormGammaCkvLocal_, dequantScaleWDkvKrLocal_,
         dequantScaleXLocal, sharedBuf, rmsNormParams);
+
+    if constexpr (isMxFp4) {
+        // Native KV RMSNorm returns BF16 before the existing C8 cache quantizer.
+        auto normBf16 = sharedBuf.template ReinterpretCast<bfloat16_t>();
+        Cast(normBf16, inputLocal, RoundMode::CAST_RINT, baseParams_->headSizeCkv);
+        PipeBarrier<PIPE_V>();
+        Cast(inputLocal, normBf16, RoundMode::CAST_NONE, baseParams_->headSizeCkv);
+        PipeBarrier<PIPE_V>();
+    }
 
     DataSyncBarrier<MemDsbT::UB>();
 
@@ -2065,7 +2118,9 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::CastQcQrSplitN(const CastQcQr
     SetFlag<HardEvent::MTE2_V>(EVENT_ID1);
     WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
     // cast
-    Cast(outputLocal, inputLocal, RoundMode::CAST_RINT, count);
+    if constexpr (!isMxFp4) {
+        Cast(outputLocal, inputLocal, RoundMode::CAST_RINT, count);
+    }
     SetFlag<HardEvent::V_MTE3>(EVENT_ID2);
     // copy out
     WaitFlag<HardEvent::V_MTE3>(EVENT_ID2);
@@ -2193,7 +2248,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::DequantRopeSplitNDequantLoop(
         if constexpr (IsFullQuantMode<mmQcQrInputType, dequantScaleType, true>()) {
             DequantQcQrSplitN(DequantQcQrSplitNParams{mmQnPreDequantOffset, mmQnPreDequantResOffset, inputOffset,
                                                       outputOffset, srcStride, dstStride});
-        } else if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+        } else if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
             CastQcQrSplitN(CastQcQrSplitNParams{mmQnPreDequantOffset, mmQnPreDequantResOffset, inputOffset,
                                                 outputOffset, srcStride, dstStride});
         }
@@ -2260,7 +2315,7 @@ __aicore__ inline void MlaPrologVecS1CubS2<MLAPT>::DequantQcAndRopeQc(AivOffset 
             CrossCoreSetFlag<SYNC_MODE_CUBE_VEC, PIPE_MTE3>(FINISH_VEC_DEQUANT_QC);
             RopeQr(aivOffset.ropeQrOffset, aivOffset.ropeQrResOffset, aivOffset.curVecToken,
                    aivOffset.curBlockTokenOffset);
-        } else if constexpr (std::is_same<mmQcQrInputType, FP8E4M3>::value && isFp8E8m0) {
+        } else if constexpr ((std::is_same<mmQcQrInputType, FP8E4M3>::value || isMxFp4) && isFp8E8m0) {
             CrossCoreWaitFlag(FINISH_MM_QCQR);
             WaitAllCore<SYNC_MODE_ALL_VEC, PIPE_MTE3>(FINISH_VEC_ALL);
             CastQc(aivOffset.mmQnPreDequantOffset, aivOffset.mmQnPreDequantResOffset, aivOffset.curVecToken);

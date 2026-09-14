@@ -141,6 +141,20 @@ __global__ __aicore__ void mla_prolog_v3(
         op.Process();
     }
 #if __CCE_AICORE__ == 310
+    else if constexpr (static_cast<SCENARIO>(Scenario) == SCENARIO::MXFP4) {
+        // Scenario 3 preserves every existing 4-bit QuantMode key. Within this
+        // scenario QuantMode 0/1 selects BF16 KV / existing FP8 per-tile KV.
+        using CacheType = typename std::conditional<QuantMode == 0, bfloat16_t, FP8E4M3>::type;
+        MlaPrologVecS1CubS2<MLAPType<FP4E2M1, FP4E2M1, CacheType, FP8E8M0, cacheMode, EnableDequantOpt,
+                                     EnableGroupComputeOpt, emptyMode, actualSeqLenMode, QuantMode == 1,
+                                     cvRatio, EnableRope>> op(&pipe, tilingData, tilingDataBaseParams);
+        op.Init(tokenX, weightDq, weightUqQr, weightUk, weightDkvKr, rmsnormGammaCq, rmsnormGammaCkv,
+                ropeSin, ropeCos, cacheIndex, kvCacheOut, krCacheOut, dequantScaleX, dequantScaleWDq,
+                dequantScaleWUqQr, dequantScaleWDkvKr, quantScaleCkv, quantScaleCkr, smoothScalesCq,
+                actualSeqLen, kNopeClipAlpha, queryOut, queryRopeOut, dequantScaleQNopeOut, queryNormOut,
+                dequantScaleQNormOut, workspace);
+        op.Process();
+    }
     else if constexpr (static_cast<SCENARIO>(Scenario) == SCENARIO::QUANT &&
                        static_cast<QUANT_MODE>(QuantMode) == QUANT_MODE::MXFP8_FULL_QUANT_KV_NO_QUANT) {
         if constexpr (splitMMode == SPLIT_M_MODE::ENABLED) {

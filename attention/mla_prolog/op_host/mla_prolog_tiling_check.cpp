@@ -127,10 +127,10 @@ bool MlaPrologTilingCheck::CheckAttrsRange() const
 {
     if (std::strncmp(context_.opType, V3_OP_NAME, OP_NAME_LEN) == 0) {
         if (GetCurNpuArch() == NpuArch::DAV_3510) {
-            const std::unordered_set<uint32_t> supportedWeightQuantMode{0U, 1U, 2U, 3U, 4U, 5U};
+            const std::unordered_set<uint32_t> supportedWeightQuantMode{0U, 1U, 2U, 3U, 4U, 5U, 6U};
             OP_CHECK_IF(supportedWeightQuantMode.find(*context_.weightQuantMode) == supportedWeightQuantMode.end(),
                         OP_LOGE_FOR_INVALID_VALUE(context_.opName, "WeightQuantMode",
-                                                  std::to_string(*context_.weightQuantMode), "0, 1, 2, 3, 4 or 5"),
+                                                  std::to_string(*context_.weightQuantMode), "0, 1, 2, 3, 4, 5 or 6"),
                         return false);
         } else {
             const std::unordered_set<uint32_t> supportedWeightQuantMode{0U, 1U, 2U};
@@ -292,7 +292,9 @@ ge::graphStatus MlaPrologTilingCheck::CheckQuantMode() const
             static_cast<uint32_t>(QUANT_MODE::HIF8_FULL_QUANT_KV_NO_QUANT),
             static_cast<uint32_t>(QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TENSOR),
             static_cast<uint32_t>(QUANT_MODE::FP8_FULL_QUANT_KV_QUANT_PER_TILE),
-            static_cast<uint32_t>(QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE)};
+            static_cast<uint32_t>(QUANT_MODE::HIF8_FULL_QUANT_KV_QUANT_PER_TILE),
+            static_cast<uint32_t>(QUANT_MODE::MXFP4_FULL_QUANT_KV_NO_QUANT),
+            static_cast<uint32_t>(QUANT_MODE::MXFP4_FULL_QUANT_KV_QUANT_PER_TILE)};
         OP_CHECK_IF(
             supportedQuantModes.find(static_cast<uint32_t>(scenarioInfo_.quantMode_)) == supportedQuantModes.end(),
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -378,21 +380,21 @@ void MlaPrologTilingCheck::FillCommonParamInfo()
 
     if (context_.weightDq.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_DIM_NUM_4) {
         expectedParamInfo_[WEIGHT_DQ_NAME].dimNum = MLA_PROLOG_DIM_NUM_4;
-        int64_t weightAxisSize = 32L / ge::GetSizeByDataType(context_.weightDq.desc->GetDataType());
+        int64_t weightAxisSize = GetMlaWeightNzC0(context_.weightDq.desc->GetDataType());
         expectedParamInfo_[WEIGHT_DQ_NAME].shape =
             std::vector<int64_t>{static_cast<int64_t>(baseShapeInfo_.hcqSize) / weightAxisSize,
                                  static_cast<int64_t>(baseShapeInfo_.heSize) / NZ_H0_SIZE, NZ_H0_SIZE, weightAxisSize};
     }
     if (context_.weightUqQr.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_DIM_NUM_4) {
         expectedParamInfo_[WEIGHT_UQ_QR_NAME].dimNum = MLA_PROLOG_DIM_NUM_4;
-        int64_t weightAxisSize = 32L / ge::GetSizeByDataType(context_.weightUqQr.desc->GetDataType());
+        int64_t weightAxisSize = GetMlaWeightNzC0(context_.weightUqQr.desc->GetDataType());
         expectedParamInfo_[WEIGHT_UQ_QR_NAME].shape =
             std::vector<int64_t>{static_cast<int64_t>(baseShapeInfo_.headSizeUqQr) / weightAxisSize,
                                  static_cast<int64_t>(baseShapeInfo_.hcqSize) / NZ_H0_SIZE, NZ_H0_SIZE, weightAxisSize};
     }
     if (context_.weightDkvKr.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_DIM_NUM_4) {
         expectedParamInfo_[WEIGHT_DKV_KR_NAME].dimNum = MLA_PROLOG_DIM_NUM_4;
-        int64_t weightAxisSize = 32L / ge::GetSizeByDataType(context_.weightDkvKr.desc->GetDataType());
+        int64_t weightAxisSize = GetMlaWeightNzC0(context_.weightDkvKr.desc->GetDataType());
         expectedParamInfo_[WEIGHT_DKV_KR_NAME].shape =
             std::vector<int64_t>{static_cast<int64_t>(baseShapeInfo_.hckvSize + baseShapeInfo_.drSize) / weightAxisSize,
                                  static_cast<int64_t>(baseShapeInfo_.heSize) / NZ_H0_SIZE, NZ_H0_SIZE, weightAxisSize};
@@ -556,7 +558,8 @@ void MlaPrologTilingCheck::FillOptionalOutputParamShapeWithDimsV3()
 
 void MlaPrologTilingCheck::FillQueryNormScaleShape()
 {
-    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::NO_QUANT) {
+    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::NO_QUANT ||
+        scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT) {
         expectedParamInfo_.emplace(DEQUANT_SCALE_Q_NORM_NAME, std::vector<uint32_t>{0});
     } else if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP8_FULL_QUANT) {
         expectedParamInfo_.emplace(
@@ -569,7 +572,8 @@ void MlaPrologTilingCheck::FillQueryNormScaleShape()
 
 void MlaPrologTilingCheck::FillQueryNormDtypes()
 {
-    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::NO_QUANT) {
+    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::NO_QUANT ||
+        scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT) {
         expectedParamInfo_[QUERY_NORM_NAME].dtype = ge::DT_BF16;
         expectedParamInfo_[DEQUANT_SCALE_Q_NORM_NAME].dtype = ge::DT_FLOAT;
     } else if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP8_FULL_QUANT) {
@@ -591,6 +595,8 @@ void MlaPrologTilingCheck::FillScenarioParamInfo()
 {
     using FillFunc = void (MlaPrologTilingCheck::*)();
     static const std::unordered_map<QUANT_MODE, FillFunc> dispatchTable = {
+        {QUANT_MODE::MXFP4_FULL_QUANT_KV_NO_QUANT, &MlaPrologTilingCheck::FillMxfp4FullQuantParamInfo},
+        {QUANT_MODE::MXFP4_FULL_QUANT_KV_QUANT_PER_TILE, &MlaPrologTilingCheck::FillMxfp4FullKVPertileParamInfo},
         {QUANT_MODE::NO_QUANT, &MlaPrologTilingCheck::FillNonQuantParamInfo},
         {QUANT_MODE::PARTIAL_QUANT_KV_NO_QUANT, &MlaPrologTilingCheck::FillPartialQuantParamInfo},
         {QUANT_MODE::PARTIAL_QUANT_KV_QUANT_PER_CHANNEL, &MlaPrologTilingCheck::FillPartialKVQuantParamInfo},
@@ -784,6 +790,23 @@ void MlaPrologTilingCheck::FillMxfp8FullQuantParamInfo()
     expectedParamInfo_[K_NOPE_CLIP_ALPHA_NAME].isValid = false;
 }
 
+void MlaPrologTilingCheck::FillMxfp4FullQuantParamInfo()
+{
+    // Same contiguous K32 E8M0 scale contract; only the three GEMM data inputs differ.
+    FillMxfp8FullQuantParamInfo();
+    expectedParamInfo_[TOKEN_X_NAME].dtype = ge::DT_FLOAT4_E2M1;
+    expectedParamInfo_[WEIGHT_DQ_NAME].dtype = ge::DT_FLOAT4_E2M1;
+    expectedParamInfo_[WEIGHT_UQ_QR_NAME].dtype = ge::DT_FLOAT4_E2M1;
+    expectedParamInfo_[WEIGHT_DKV_KR_NAME].dtype = ge::DT_FLOAT4_E2M1;
+}
+
+void MlaPrologTilingCheck::FillMxfp4FullKVPertileParamInfo()
+{
+    FillMxfp4FullQuantParamInfo();
+    expectedParamInfo_[KV_CACHE_NAME].dtype = ge::DT_FLOAT8_E4M3FN;
+    expectedParamInfo_[KV_CACHE_OUT_NAME].dtype = ge::DT_FLOAT8_E4M3FN;
+}
+
 void MlaPrologTilingCheck::FillMxfp8FullKVQuantParamInfo()
 {
     FillMxfp8FullQuantParamInfo();
@@ -868,6 +891,15 @@ void MlaPrologTilingCheck::GenActualParamInfo()
     actualParamInfo_.emplace(DEQUANT_SCALE_Q_NOPE_NAME, context_.dequantScaleQNope);
     actualParamInfo_.emplace(QUERY_NORM_NAME, context_.queryNorm);
     actualParamInfo_.emplace(DEQUANT_SCALE_Q_NORM_NAME, context_.dequantScaleQNorm);
+    if (IsMxfp4Requested()) {
+        for (const auto *name : {QUANT_SCALE_CKV_NAME, QUANT_SCALE_CKR_NAME, SMOOTH_SCALES_CQ_NAME,
+                                 ACTUAL_SEQ_LEN_NAME, K_NOPE_CLIP_ALPHA_NAME}) {
+            auto &param = actualParamInfo_[name];
+            if (std::find(param.shape.begin(), param.shape.end(), 0) != param.shape.end()) {
+                param.isValid = false; // explicit empty optional is equivalent to absent in MXFP4
+            }
+        }
+    }
     if (std::strncmp(context_.opType, V3_OP_NAME, OP_NAME_LEN) == 0 &&
         *(context_.ckvkrRepoMode) == static_cast<int>(CKVKR_REPO_MODE::COMBINE)) {
         actualParamInfo_.erase(KR_CACHE_NAME);
@@ -978,12 +1010,50 @@ ge::graphStatus MlaPrologTilingCheck::CheckParamByScenario()
     return isCorrect;
 }
 
+bool MlaPrologTilingCheck::IsMxfp4Requested() const
+{
+    return std::strncmp(context_.opType, V3_OP_NAME, OP_NAME_LEN) == 0 && context_.weightQuantMode != nullptr &&
+           *context_.weightQuantMode == static_cast<int64_t>(WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT);
+}
+
+ge::graphStatus MlaPrologTilingCheck::CheckMxfp4Scope() const
+{
+    if (!IsMxfp4Requested()) {
+        return ge::GRAPH_SUCCESS;
+    }
+    OP_CHECK_IF(GetCurNpuArch() != NpuArch::DAV_3510 || !scenarioInfo_.batchSeqFusedFlag_ ||
+                    scenarioInfo_.cacheMode_ != CACHE_MODE::PA_BSND || baseShapeInfo_.tSize == 0U ||
+                    baseShapeInfo_.tSize > 128U || baseShapeInfo_.blockNum == 0U || IsRopeDisabled() ||
+                    *context_.queryQuantMode != 0 || *context_.qcQrScale != 1.0f || *context_.kcScale != 1.0f,
+                OP_LOGE(context_.opName,
+                        "MXFP4 supports V3 DAV_3510 only, 2D token T in [1,128], nonempty PA_BSND cache, "
+                        "do_rope=true, queryQuantMode=0 and qcQrScale=kcScale=1"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(baseShapeInfo_.heSize % 64U != 0U || baseShapeInfo_.hcqSize % 64U != 0U ||
+                    baseShapeInfo_.headSizeUqQr % 64U != 0U ||
+                    (baseShapeInfo_.hckvSize + baseShapeInfo_.drSize) % 64U != 0U,
+                OP_LOGE(context_.opName, "MXFP4 requires K64 alignment and NZ output channels aligned to 64"),
+                return ge::GRAPH_FAILED);
+    // These options have no producer/consumer in the new mode; do not silently ignore data.
+    for (const auto *param : {&context_.quantScaleCkv, &context_.quantScaleCkr, &context_.smoothScalesCq,
+                              &context_.actualSeqLen, &context_.kNopeClipAlpha}) {
+        OP_CHECK_IF(param->desc != nullptr && param->shape != nullptr &&
+                        param->shape->GetStorageShape().GetShapeSize() != 0,
+                    OP_LOGE(context_.opName, "MXFP4 requires unused quant/smooth/sequence/clip inputs to be absent or empty"),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus MlaPrologTilingCheck::CheckScenarParam()
 {
     if (!std::strncmp(context_.opType, V3_OP_NAME, OP_NAME_LEN) == 0) {
         return ge::GRAPH_SUCCESS;
     }
 
+    if (CheckMxfp4Scope() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     ge::graphStatus isCorrect{ge::GRAPH_SUCCESS};
     CheckRepoMode(scenarioInfo_.kvQuantMode_ == KV_QUANT_MODE::PER_TILE, isCorrect);
     CheckQueryQuantMode(scenarioInfo_.kvQuantMode_ == KV_QUANT_MODE::PER_TENSOR, isCorrect);
@@ -1069,6 +1139,10 @@ ge::graphStatus MlaPrologTilingCheck::CheckSingleRequiredParam() const
 
 bool MlaPrologTilingCheck::CheckTokenX() const
 {
+    if (IsMxfp4Requested() && GetCurNpuArch() == NpuArch::DAV_3510) {
+        return IsSingleParamValid(context_.tokenX, TOKEN_X_NAME, {ge::DT_FLOAT4_E2M1},
+                                  {ge::FORMAT_ND}, {2});
+    }
     if (GetCurNpuArch() == NpuArch::DAV_3510) {
         return IsSingleParamValid(context_.tokenX, TOKEN_X_NAME,
                                   {ge::DT_BF16, ge::DT_INT8, ge::DT_FLOAT8_E4M3FN, ge::DT_HIFLOAT8},
@@ -1081,6 +1155,10 @@ bool MlaPrologTilingCheck::CheckTokenX() const
 
 bool MlaPrologTilingCheck::CheckWDq() const
 {
+    if (IsMxfp4Requested() && GetCurNpuArch() == NpuArch::DAV_3510) {
+        return IsSingleParamValid(context_.weightDq, WEIGHT_DQ_NAME, {ge::DT_FLOAT4_E2M1},
+                                  {ge::FORMAT_FRACTAL_NZ}, {4});
+    }
     if (GetCurNpuArch() == NpuArch::DAV_3510) {
         return IsSingleParamValid(context_.weightDq, WEIGHT_DQ_NAME,
                                   {ge::DT_BF16, ge::DT_INT8, ge::DT_FLOAT8_E4M3FN, ge::DT_HIFLOAT8},
@@ -1093,6 +1171,10 @@ bool MlaPrologTilingCheck::CheckWDq() const
 
 bool MlaPrologTilingCheck::CheckWUqQr() const
 {
+    if (IsMxfp4Requested() && GetCurNpuArch() == NpuArch::DAV_3510) {
+        return IsSingleParamValid(context_.weightUqQr, WEIGHT_UQ_QR_NAME, {ge::DT_FLOAT4_E2M1},
+                                  {ge::FORMAT_FRACTAL_NZ}, {4});
+    }
     if (GetCurNpuArch() == NpuArch::DAV_3510) {
         return IsSingleParamValid(context_.weightUqQr, WEIGHT_UQ_QR_NAME,
                                   {ge::DT_BF16, ge::DT_INT8, ge::DT_FLOAT8_E4M3FN, ge::DT_HIFLOAT8},
@@ -1116,6 +1198,10 @@ bool MlaPrologTilingCheck::CheckWUk() const
 
 bool MlaPrologTilingCheck::CheckWDkvKr() const
 {
+    if (IsMxfp4Requested() && GetCurNpuArch() == NpuArch::DAV_3510) {
+        return IsSingleParamValid(context_.weightDkvKr, WEIGHT_DKV_KR_NAME, {ge::DT_FLOAT4_E2M1},
+                                  {ge::FORMAT_FRACTAL_NZ}, {4});
+    }
     if (GetCurNpuArch() == NpuArch::DAV_3510) {
         return IsSingleParamValid(context_.weightDkvKr, WEIGHT_DKV_KR_NAME,
                                   {ge::DT_BF16, ge::DT_INT8, ge::DT_FLOAT8_E4M3FN, ge::DT_HIFLOAT8},

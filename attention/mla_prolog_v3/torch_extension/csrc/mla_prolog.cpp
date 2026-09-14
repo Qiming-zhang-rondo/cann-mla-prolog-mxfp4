@@ -27,6 +27,7 @@ constexpr int64_t MODE_2 = 2;
 constexpr int64_t MODE_3 = 3;
 constexpr int64_t MODE_4 = 4;
 constexpr int64_t MODE_5 = 5;
+constexpr int64_t MODE_MXFP4 = 6;
 constexpr int64_t FP8_E4M3_BLOCK_SIZE = 32;
 // shape 格式字段约束
 constexpr int64_t HE_SUPPORTED[] = {1024, 2048, 3072, 4096, 5120, 6144, 7168, 7680, 8192};
@@ -377,6 +378,31 @@ inline aclDataType ResolveTensorAclDtype(const at::Tensor &tensor, bool force_hi
     return tensor.defined() ? ConvertToAclDataType(tensor.scalar_type()) : ACL_DT_UNDEFINED;
 }
 
+// Explicit byte-packed A4W4 NZ input: [N/64,K/16,16,32] bytes.
+// Unlike the generic TensorWrapper this preserves both the logical 2D shape
+// and the physical 4D NZ descriptor. No format-cast or second nibble expansion.
+aclTensor *MakePackedMxfp4NzDescriptor(const at::Tensor &weight)
+{
+    static const auto create = GET_OP_API_FUNC(aclCreateTensor);
+    TORCH_CHECK(create != nullptr, "aclCreateTensor is unavailable");
+    const int64_t k = weight.size(1) * 16;
+    const int64_t n = weight.size(0) * 64;
+    const int64_t shape[] = {k, n};
+    const int64_t strides[] = {n, 1};
+    const int64_t storage[] = {weight.size(0), weight.size(1), 16, 64};
+    return create(shape, 2, ACL_FLOAT4_E2M1, strides, weight.storage_offset() * 2,
+                  ACL_FORMAT_FRACTAL_NZ, storage, 4, const_cast<void *>(weight.storage().data()));
+}
+
+void CheckMxfp4PackedWeight(const at::Tensor &w, int64_t k, int64_t n, const char *name)
+{
+    TORCH_CHECK(w.scalar_type() == at::kByte && w.is_contiguous() && w.storage_offset() == 0 && IsOpInputBaseFormat(w),
+                name, " must be a contiguous base-format uint8 NZ byte container");
+    TORCH_CHECK(w.dim() == 4 && w.size(0) == n / 64 && w.size(1) == k / 16 &&
+                    w.size(2) == 16 && w.size(3) == 32,
+                name, " requires byte shape [N/64,K/16,16,32]");
+}
+
 } // namespace
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolog(
@@ -401,9 +427,31 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
     TORCH_CHECK(token_x_dim == DIM_2 || token_x_dim == DIM_3,
                 "token_x dim num should be 2 or 3, but the actual value is ", token_x_dim);
     TORCH_CHECK(weight_uk.dim() == DIM_3, "weight_uk dim num should be 3, but the actual value is ", weight_uk.dim());
+    const bool is_mxfp4 = weight_quant_mode == MODE_MXFP4;
+    if (!is_mxfp4) {
     CheckShapeConstraints(token_x, weight_dq, weight_uq_qr, weight_uk, weight_dkv_kr, rmsnorm_gamma_cq,
                           rmsnorm_gamma_ckv, kv_cache, kr_cache, rope_sin, rope_cos, cache_index, cache_mode,
                           kv_cache_quant_mode);
+    } else {
+        TORCH_CHECK(token_x.dim() == 2 && token_x.scalar_type() == at::kByte && token_x.is_contiguous(),
+                    "MXFP4 token_x requires contiguous uint8 [T,He/2]");
+        TORCH_CHECK(ResolveDoRope(rope_sin, rope_cos), "MXFP4 V3 requires RoPE");
+        TORCH_CHECK(cache_mode == "PA_BSND" && query_quant_mode == 0 &&
+                    (kv_cache_quant_mode == 0 || kv_cache_quant_mode == 3), "unsupported MXFP4 mode combination");
+        TORCH_CHECK(weight_uk.scalar_type() == at::kBFloat16 && rmsnorm_gamma_cq.dim() == 1,
+                    "MXFP4 weight_uk and query norm gamma require BF16");
+        const int64_t he = token_x.size(1) * 2;
+        const int64_t hcq = rmsnorm_gamma_cq.size(0);
+        CheckMxfp4PackedWeight(weight_dq, he, hcq, "weight_dq");
+        CheckMxfp4PackedWeight(weight_uq_qr, hcq, weight_uk.size(0) * (weight_uk.size(1) + DR), "weight_uq_qr");
+        CheckMxfp4PackedWeight(weight_dkv_kr, he, HCKV + DR, "weight_dkv_kr");
+        for (const auto &scale : {dequant_scale_x, dequant_scale_w_dq, dequant_scale_w_uq_qr, dequant_scale_w_dkv_kr}) {
+            TORCH_CHECK(HasDefinedTensor(scale) && scale->scalar_type() == at::kFloat8_e8m0fnu &&
+                        scale->dim() == 2 && scale->is_contiguous(), "MXFP4 needs four contiguous 2D E8M0 scales");
+        }
+        TORCH_CHECK(!HasDefinedTensor(actual_seq_len) && !HasDefinedTensor(smooth_scales_cq),
+                    "MXFP4 does not support actual_seq_len or smooth_scales_cq");
+    }
 
     const bool is_hifloat8 =
         IsHifloat8Scene(weight_quant_mode, token_x, weight_dq, weight_uq_qr, weight_dkv_kr, token_x_dtype,
@@ -426,8 +474,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
     }
     query_rope = MakeQueryRopeTensor(token_x, weight_uk, rope_dim);
     if (query_norm_flag) {
-        query_norm = MakeQueryNormTensor(token_x, weight_dq, weight_uq_qr, is_hifloat8);
-        if (weight_quant_mode != 0) {
+        query_norm = is_mxfp4 ? at::empty({token_x.size(0), rmsnorm_gamma_cq.size(0)},
+                                        token_x.options().dtype(at::kBFloat16))
+                             : MakeQueryNormTensor(token_x, weight_dq, weight_uq_qr, is_hifloat8);
+        if (weight_quant_mode != 0 && !is_mxfp4) {
             dequant_scale_q_norm = MakeDequantScaleQNormTensor(token_x, weight_dq, weight_quant_mode, dequant_scale_x);
         }
     }
@@ -440,7 +490,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
         is_hifloat8 && (kv_cache_quant_mode == MODE_1 || kv_cache_quant_mode == MODE_3);
     // query 仅在全量化 KV（kv_cache_quant_mode=1）场景才以 HIFLOAT8 输出，否则为 bf16。
     const bool force_query_hifloat8 = is_hifloat8 && kv_cache_quant_mode == MODE_1;
-    TensorWrapper token_x_wrapper{token_x, ResolveTensorAclDtype(token_x, is_hifloat8)};
+    TensorWrapper token_x_wrapper{token_x, is_mxfp4 ? ACL_FLOAT4_E2M1 : ResolveTensorAclDtype(token_x, is_hifloat8)};
     TensorWrapper weight_dq_wrapper{weight_dq, ResolveTensorAclDtype(weight_dq, is_hifloat8)};
     TensorWrapper weight_uq_qr_wrapper{weight_uq_qr, ResolveTensorAclDtype(weight_uq_qr, is_hifloat8)};
     TensorWrapper weight_dkv_kr_wrapper{weight_dkv_kr, ResolveTensorAclDtype(weight_dkv_kr, is_hifloat8)};
@@ -450,6 +500,25 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
     // do_rope=false 时 ropeSin/ropeCos 必须为空（或 None），统一以空 optional 传给 aclnn（转换为 nullptr）。
     const c10::optional<at::Tensor> acl_rope_sin = do_rope ? rope_sin : c10::nullopt;
     const c10::optional<at::Tensor> acl_rope_cos = do_rope ? rope_cos : c10::nullopt;
+    if (is_mxfp4) {
+        void *v3_api = GetOpApiFuncAddr("aclnnMlaPrologV3WeightNzGetWorkspaceSize");
+        TORCH_CHECK(v3_api != nullptr, "custom V3 API unavailable; MXFP4 never falls back to V4/native");
+        Dl_info api_info{};
+        if (dladdr(v3_api, &api_info) != 0) {
+            TORCH_WARN_ONCE("MXFP4 mode=6 calls aclnnMlaPrologV3WeightNz from ", api_info.dli_fname);
+        }
+        auto dq_nz = MakePackedMxfp4NzDescriptor(weight_dq);
+        auto uq_nz = MakePackedMxfp4NzDescriptor(weight_uq_qr);
+        auto dkv_nz = MakePackedMxfp4NzDescriptor(weight_dkv_kr);
+        ACLNN_CMD(aclnnMlaPrologV3WeightNz, token_x_wrapper, dq_nz, uq_nz, weight_uk,
+                  dkv_nz, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, acl_rope_sin, acl_rope_cos, kv_cache_wrapper,
+                  kr_cache, cache_index, dequant_scale_x, dequant_scale_w_dq, dequant_scale_w_uq_qr,
+                  dequant_scale_w_dkv_kr, quant_scale_ckv, quant_scale_ckr, smooth_scales_cq, actual_seq_len,
+                  k_nope_clip_alpha, rmsnorm_epsilon_cq, rmsnorm_epsilon_ckv, cache_mode_ptr, weight_quant_mode,
+                  kv_cache_quant_mode, query_quant_mode, ckvkr_repo_mode, quant_scale_repo_mode, tile_size,
+                  qc_qr_scale, kc_scale, query_wrapper, query_rope, dequant_scale_q_nope, query_norm_wrapper,
+                  dequant_scale_q_norm);
+    } else {
     ACLNN_CMD(aclnnMlaPrologV4WeightNz, token_x_wrapper, weight_dq_wrapper, weight_uq_qr_wrapper, weight_uk,
               weight_dkv_kr_wrapper, rmsnorm_gamma_cq, rmsnorm_gamma_ckv, acl_rope_sin, acl_rope_cos, kv_cache_wrapper,
               kr_cache, cache_index, dequant_scale_x, dequant_scale_w_dq, dequant_scale_w_uq_qr, dequant_scale_w_dkv_kr,
@@ -457,9 +526,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
               rmsnorm_epsilon_ckv, cache_mode_ptr, weight_quant_mode, kv_cache_quant_mode, query_quant_mode,
               ckvkr_repo_mode, quant_scale_repo_mode, tile_size, qc_qr_scale, kc_scale, do_rope, query_wrapper,
               query_rope, dequant_scale_q_nope, query_norm_wrapper, dequant_scale_q_norm);
+    }
 
     if (!query_norm.defined()) {
-        query_norm = MakeEmptyScalarTensor(weight_uq_qr, weight_uq_qr.scalar_type());
+        query_norm = MakeEmptyScalarTensor(weight_uq_qr, is_mxfp4 ? at::kBFloat16 : weight_uq_qr.scalar_type());
     }
     if (!dequant_scale_q_nope.defined()) {
         dequant_scale_q_nope = MakeEmptyScalarTensor(token_x, at::kFloat);

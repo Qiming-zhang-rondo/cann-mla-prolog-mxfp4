@@ -191,7 +191,8 @@ static ge::graphStatus SetQueryNormShape(const MlaPrologProtoShapeParam &shapePa
         queryNormShape->SetDim(DIM_INDEX_2, shapeParam.Hcq);
     }
 
-    if (weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT) {
+    if (weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT ||
+        weightQuantMode == WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT) {
         dequantScaleQNormShape->SetDimNum(DIM_NUM_1);
         dequantScaleQNormShape->SetDim(DIM_INDEX_0, DIM_NUM_0);
     } else if (weightQuantMode == WEIGHT_QUANT_MODE_MXFP8_FULL_QUANT) {
@@ -307,7 +308,8 @@ ge::graphStatus InferDataTypeMlaPrologV3(gert::InferDataTypeContext *context)
                                    isQuantQuery ? context->GetRequiredInputDataType(TOKEN_X_INDEX) : ge::DT_BF16);
         context->SetOutputDataType(DEQUANT_SCALE_Q_NOPE_INDEX, ge::DT_FLOAT);
 
-        if (weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT) {
+        if (weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT ||
+            weightQuantMode == WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT) {
             context->SetOutputDataType(QUERY_NORM_INDEX, ge::DT_BF16);
         } else {
             context->SetOutputDataType(QUERY_NORM_INDEX, context->GetRequiredInputDataType(WEIGHT_UQ_QR_INDEX));

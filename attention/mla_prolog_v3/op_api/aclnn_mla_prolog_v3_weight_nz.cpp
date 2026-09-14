@@ -103,7 +103,7 @@ bool CheckWeightQuantModeValidity(int64_t weightQuantMode)
 {
     std::set<int64_t> supportedWeightQuantMode;
     if (op::GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
-        supportedWeightQuantMode = {0LL, 1LL, 2LL, 3LL, 4LL, 5LL};
+        supportedWeightQuantMode = {0LL, 1LL, 2LL, 3LL, 4LL, 5LL, 6LL};
     } else {
         supportedWeightQuantMode = {0LL, 1LL, 2LL};
     }
@@ -135,6 +135,7 @@ bool CheckKvCacheQuantModeValidity(int64_t weightQuantMode, int64_t kvCacheQuant
         supportedKvQuantMode = {
             {0LL, {0LL}},           {1LL, {0LL, 2LL, 3LL}}, {2LL, {0LL, 1LL, 3LL}},
             {3LL, {0LL, 1LL, 3LL}}, {4LL, {0LL, 1LL, 3LL}}, {5LL, {0LL, 1LL, 3LL}},
+            {6LL, {0LL, 3LL}},
         };
     } else {
         supportedKvQuantMode = {
@@ -208,6 +209,7 @@ aclnnStatus aclnnMlaPrologV3WeightNzGetWorkspaceSize(
     const int WEIGHT_QUANT_MODE_MXFP8_FULL_QUANT = 3;
     const int WEIGHT_QUANT_MODE_FULL_QUANT_FP8 = 4;
     const int WEIGHT_QUANT_MODE_FULL_QUANT_HIF8 = 5;
+    const int WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT = 6;
     const int KV_CACHE_QUANT_MODE_NO_QUANT = 0;
     const int KV_CACHE_QUANT_MODE_PER_TENSOR = 1;
     const int KV_CACHE_QUANT_MODE_PER_CHANNEL = 2;
@@ -222,10 +224,17 @@ aclnnStatus aclnnMlaPrologV3WeightNzGetWorkspaceSize(
         return ge::GRAPH_FAILED;
     };
 
+    if (weightQuantMode == WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT && queryQuantMode != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("MlaPrologV3", "queryQuantMode", std::to_string(queryQuantMode),
+                                              "MXFP4 requires BF16 query (queryQuantMode==0)");
+        return ge::GRAPH_FAILED;
+    }
+
     auto dequantScaleQNopeHolder =
         TensorHolder(dequantScaleQNopeOutOptional, aclDataType::ACL_FLOAT, std::string("dequantScaleQNopeOut"));
     aclDataType queryNormDataType =
-        weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT ? aclDataType::ACL_BF16 : aclDataType::ACL_INT8;
+        (weightQuantMode == WEIGHT_QUANT_MODE_NO_QUANT || weightQuantMode == WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT) ?
+            aclDataType::ACL_BF16 : aclDataType::ACL_INT8;
     aclDataType dequantScaleQNormDataType =
         weightQuantMode == WEIGHT_QUANT_MODE_MXFP8_FULL_QUANT ? aclDataType::ACL_FLOAT8_E8M0 : aclDataType::ACL_FLOAT;
     if (weightQuantMode == WEIGHT_QUANT_MODE_MXFP8_FULL_QUANT || weightQuantMode == WEIGHT_QUANT_MODE_FULL_QUANT_FP8) {
@@ -261,6 +270,7 @@ aclnnStatus aclnnMlaPrologV3WeightNzGetWorkspaceSize(
     bool queryNormFlag = queryNormHolder.IsTensorNotNull();
     // weightQuantMode != 0:量化场景
     if (!dequantScaleQNormHolder.CheckTensorConditionalNotNull(weightQuantMode != WEIGHT_QUANT_MODE_NO_QUANT &&
+                                                               weightQuantMode != WEIGHT_QUANT_MODE_MXFP4_FULL_QUANT &&
                                                                queryNormFlag)) {
         return ge::GRAPH_FAILED;
     }

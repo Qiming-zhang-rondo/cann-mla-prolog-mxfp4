@@ -260,7 +260,7 @@ ge::graphStatus MlaPrologTiling::SetShapeInfo()
     if (context_->weightDq.shape->GetStorageShape().GetDimNum() == MLA_PROLOG_DIM_NUM_2) {
         baseShapeInfo_.hcqSize = context_->weightDq.shape->GetStorageShape().GetDim(MLA_PROLOG_DIM_INDEX_1);
     } else {
-        uint32_t weightDqAxisSize_ = 32U / ge::GetSizeByDataType(context_->weightDq.desc->GetDataType());
+        uint32_t weightDqAxisSize_ = GetMlaWeightNzC0(context_->weightDq.desc->GetDataType());
         // weightDq: [He, Hcq] -> [Hcq/16, He/16, 16, 16] || [Hcq/32, He/16, 16, 32]
         baseShapeInfo_.hcqSize =
             weightDqAxisSize_ * context_->weightDq.shape->GetStorageShape().GetDim(MLA_PROLOG_DIM_INDEX_0);
@@ -414,7 +414,7 @@ ge::graphStatus MlaPrologTiling::FillMatmul1Tiling()
     } else {
         auto dataType = context_->weightDq.desc->GetDataType();
         singlecoreHeadSizeCq_ =
-            CalcSingleCoreN(baseShapeInfo_.hcqSize, aicNum_, BLOCK_SIZE / DTYPE_TO_SIZE.at(dataType));
+            CalcSingleCoreN(baseShapeInfo_.hcqSize, aicNum_, GetMlaWeightNzC0(dataType));
         singlecoreHeadSizeCq_ = std::max(singlecoreHeadSizeCq_, 64U); // 64：最大使用24核
         mm1BlockNum_ = CeilDiv(baseShapeInfo_.hcqSize, singlecoreHeadSizeCq_);
     }
@@ -442,7 +442,7 @@ ge::graphStatus MlaPrologTiling::FillMatmul2Tiling()
     } else {
         auto dataType = context_->weightDkvKr.desc->GetDataType();
         singlecoreHeadSizeCkvKr_ = CalcSingleCoreN(baseShapeInfo_.hckvSize + baseShapeInfo_.drSize, aicNum_,
-                                                   BLOCK_SIZE / DTYPE_TO_SIZE.at(dataType));
+                                                   GetMlaWeightNzC0(dataType));
         mm2BlockNum_ = CeilDiv(baseShapeInfo_.hckvSize + baseShapeInfo_.drSize, singlecoreHeadSizeCkvKr_);
     }
     return ge::GRAPH_SUCCESS;
@@ -467,7 +467,7 @@ ge::graphStatus MlaPrologTiling::FillMatmul3Tiling()
         singlecoreHeadSizeQcQr_ = CalcSingleCoreN(oriM, aicNum_, baseShapeInfo_.dSize + baseShapeInfo_.drSize);
     } else {
         // headnum * (dimHeadSizeQc + dimHeadRope) 合轴切
-        singlecoreHeadSizeQcQr_ = CalcSingleCoreN(oriM, aicNum_, BLOCK_SIZE / DTYPE_TO_SIZE.at(dataType));
+        singlecoreHeadSizeQcQr_ = CalcSingleCoreN(oriM, aicNum_, GetMlaWeightNzC0(dataType));
     }
     mm3BlockNum_ = CeilDiv(oriM, singlecoreHeadSizeQcQr_);
 
@@ -526,7 +526,8 @@ ge::graphStatus MlaPrologTiling::ProcessBaseInputs()
     } else if ((context_->weightUqQr.desc->GetDataType() == ge::DT_INT8 &&
                 baseShapeInfo_.nSize >= GROUP_COMPUTE_N_SIZE) ||
                context_->weightUqQr.desc->GetDataType() == ge::DT_FLOAT8_E4M3FN ||
-               context_->weightUqQr.desc->GetDataType() == ge::DT_HIFLOAT8) {
+               context_->weightUqQr.desc->GetDataType() == ge::DT_HIFLOAT8 ||
+               context_->weightUqQr.desc->GetDataType() == ge::DT_FLOAT4_E2M1) {
         // 场景1：INT8全量化且N大于等于8；场景2：MXFP8全量化场景
         // 通过切N处理MM3，MM4之后的操作例如Rope，DynamicQuant等会有性能收益
         enableDequantOpt_ = true;
@@ -606,6 +607,26 @@ void MlaPrologTiling::FillTilingCoreParams()
 ge::graphStatus MlaPrologTiling::CalcWorkSpace()
 {
     workspaceSize_ = libapiSize_;
+    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT) {
+        // Must match MlaProlog MXFP4 kernel Init workspace order. All GEMMs materialize BF16.
+        const size_t tokens = stepBatchSize_;
+        const size_t hcq = baseShapeInfo_.hcqSize;
+        const size_t hckvDr = baseShapeInfo_.hckvSize + baseShapeInfo_.drSize;
+        const size_t heads = baseShapeInfo_.nSize;
+        const size_t d = baseShapeInfo_.dSize;
+        const size_t dr = baseShapeInfo_.drSize;
+        const size_t scaleRowBytes = CeilDiv(hcq / 32U, static_cast<size_t>(32U)) * 32U;
+        workspaceSize_ += tokens * scaleRowBytes;                 // E8M0 internal Q scale
+        workspaceSize_ += tokens * hckvDr * NUM_BYTES_BF16;        // down-KV result
+        workspaceSize_ += tokens * hcq * NUM_BYTES_BF16;           // down-Q result
+        workspaceSize_ += tokens * hcq / 2U;                      // packed internal Q4
+        workspaceSize_ += tokens * heads * (d + dr) * NUM_BYTES_BF16;
+        workspaceSize_ += tokens * heads * d * NUM_BYTES_BF16;     // extracted Q_nope
+        if (context_->workSpaces) {
+            context_->workSpaces[0] = workspaceSize_;
+        }
+        return ge::GRAPH_SUCCESS;
+    }
     uint32_t mm1Mult = (scenarioInfo_.splitMFlag_ == 1U) ? mm1BlockNum_ : 1U;
     uint32_t mm2Mult = (scenarioInfo_.splitMFlag_ == 1U) ? mm2BlockNum_ : 1U;
     uint32_t mm3Mult = (scenarioInfo_.splitMFlag_ == 1U) ? mm3BlockNum_ : 1U;
@@ -669,6 +690,13 @@ ge::graphStatus MlaPrologTiling::GenTilingKey() const
         // 全量化场景，对应tiling key为2+0(全量化:2)或2+1（全量化:2+ kv量化:1）
         // 非量化和半量化场景，对应tiling key为0
         quantType = static_cast<uint8_t>(scenarioInfo_.quantMode_);
+    }
+
+    // Preserve the old four-bit QUANT_MODE field and every following bit.
+    // Semantic MXFP4 combinations 16/17 use SCENARIO=3, field QUANT_MODE=0/1.
+    if (scenarioInfo_.weightQuantMode_ == WEIGHT_QUANT_MODE::MXFP4_FULL_QUANT) {
+        typeValue = 3U;
+        quantType = scenarioInfo_.kvQuantMode_ == KV_QUANT_MODE::PER_TILE ? 1U : 0U;
     }
 
     uint8_t cvMode = ASCENDC_TPL_MIX_AIC_1_2; // 默认cv 1:2模式

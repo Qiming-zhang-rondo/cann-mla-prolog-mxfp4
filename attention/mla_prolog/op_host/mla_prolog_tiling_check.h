@@ -151,6 +151,8 @@ public:
 private:
     bool CheckAttrsNotNull() const;
     bool CheckAttrsRange() const;
+    bool IsMxfp4Requested() const;
+    ge::graphStatus CheckMxfp4Scope() const;
     bool CheckCacheModeParamShape() const;
     ge::graphStatus CheckHcqSize() const;
     ge::graphStatus CheckDSize() const;
@@ -198,6 +200,8 @@ private:
     void FillFullQuantParamInfo();
     void FillFullKVQuantParamInfo();
     void FillFullKVPertileQuantParamInfo();
+    void FillMxfp4FullQuantParamInfo();
+    void FillMxfp4FullKVPertileParamInfo();
     void FillMxfp8FullQuantParamInfo();
     void FillMxfp8FullKVQuantParamInfo();
     void FillMxfp8FullKVPertileParamInfo();

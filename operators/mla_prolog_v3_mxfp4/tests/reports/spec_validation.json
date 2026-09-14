@@ -1,0 +1,209 @@
+{
+  "spec": "operators/mla_prolog_v3_mxfp4/docs/spec.yaml",
+  "stages": [
+    {
+      "stage_id": 1,
+      "status": "FAIL",
+      "findings": [
+        {
+          "severity": "error",
+          "rule_id": "schema_static",
+          "field_path": "math_semantics/composition/primitives/0/op",
+          "message": "'mx_dequantize' is not one of ['broadcast', 'reduce', 'elementwise_unary', 'elementwise_binary', 'cast', 'permute', 'concat', 'slice', 'stack', 'gemm', 'conv']",
+          "suggested_fix": null
+        },
+        {
+          "severity": "error",
+          "rule_id": "schema_static",
+          "field_path": "math_semantics/composition/primitives/2/op",
+          "message": "'rms_norm' is not one of ['broadcast', 'reduce', 'elementwise_unary', 'elementwise_binary', 'cast', 'permute', 'concat', 'slice', 'stack', 'gemm', 'conv']",
+          "suggested_fix": null
+        },
+        {
+          "severity": "error",
+          "rule_id": "schema_static",
+          "field_path": "math_semantics/composition/primitives/4/op",
+          "message": "'mx_quantize' is not one of ['broadcast', 'reduce', 'elementwise_unary', 'elementwise_binary', 'cast', 'permute', 'concat', 'slice', 'stack', 'gemm', 'conv']",
+          "suggested_fix": null
+        },
+        {
+          "severity": "error",
+          "rule_id": "schema_static",
+          "field_path": "math_semantics/composition/primitives/5/op",
+          "message": "'mx_gemm' is not one of ['broadcast', 'reduce', 'elementwise_unary', 'elementwise_binary', 'cast', 'permute', 'concat', 'slice', 'stack', 'gemm', 'conv']",
+          "suggested_fix": null
+        },
+        {
+          "severity": "error",
+          "rule_id": "schema_static",
+          "field_path": "math_semantics/composition/primitives/7/op",
+          "message": "'scatter_update' is not one of ['broadcast', 'reduce', 'elementwise_unary', 'elementwise_binary', 'cast', 'permute', 'concat', 'slice', 'stack', 'gemm', 'conv']",
+          "suggested_fix": null
+        }
+      ]
+    },
+    {
+      "stage_id": 2,
+      "status": "FAIL",
+      "findings": [
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.primitive_not_whitelisted",
+          "field_path": "math_semantics.composition.primitives[0].op",
+          "message": "原语 op='mx_dequantize' 不在 PRIMITIVE_WHITELIST",
+          "suggested_fix": "改为白名单内之一: ['broadcast', 'cast', 'concat', 'conv', 'elementwise_binary', 'elementwise_unary', 'gemm', 'permute', 'reduce', 'slice', 'stack']"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.primitive_not_whitelisted",
+          "field_path": "math_semantics.composition.primitives[2].op",
+          "message": "原语 op='rms_norm' 不在 PRIMITIVE_WHITELIST",
+          "suggested_fix": "改为白名单内之一: ['broadcast', 'cast', 'concat', 'conv', 'elementwise_binary', 'elementwise_unary', 'gemm', 'permute', 'reduce', 'slice', 'stack']"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.primitive_not_whitelisted",
+          "field_path": "math_semantics.composition.primitives[4].op",
+          "message": "原语 op='mx_quantize' 不在 PRIMITIVE_WHITELIST",
+          "suggested_fix": "改为白名单内之一: ['broadcast', 'cast', 'concat', 'conv', 'elementwise_binary', 'elementwise_unary', 'gemm', 'permute', 'reduce', 'slice', 'stack']"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.primitive_not_whitelisted",
+          "field_path": "math_semantics.composition.primitives[5].op",
+          "message": "原语 op='mx_gemm' 不在 PRIMITIVE_WHITELIST",
+          "suggested_fix": "改为白名单内之一: ['broadcast', 'cast', 'concat', 'conv', 'elementwise_binary', 'elementwise_unary', 'gemm', 'permute', 'reduce', 'slice', 'stack']"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.primitive_not_whitelisted",
+          "field_path": "math_semantics.composition.primitives[7].op",
+          "message": "原语 op='scatter_update' 不在 PRIMITIVE_WHITELIST",
+          "suggested_fix": "改为白名单内之一: ['broadcast', 'cast', 'concat', 'conv', 'elementwise_binary', 'elementwise_unary', 'gemm', 'permute', 'reduce', 'slice', 'stack']"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.quantization_attrs",
+          "field_path": "attributes",
+          "message": "Quantization 必须含以下任一组量化参数（attribute 或 input 均可）：{scale, zero_point} / {scale} / {x1Scale, x2Scale} / {dequant_scale} / {deqScale}，或算子名含 'quant'",
+          "suggested_fix": "按算子语义选择对应形式；对称量化只需 scale；双输入分别量化用 x1Scale + x2Scale"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.dtype_chip_mismatch",
+          "field_path": "op.platform_constraints.supported_chips",
+          "message": "芯片 'Ascend950PR' 不支持以下 dtype: ['float8_e8m0']；已知该芯片支持: ['bfloat16', 'bool', 'complex128', 'complex64', 'float16', 'float32', 'float4_e2m1', 'float64', 'float8_e4m3fn', 'float8_e5m2', 'hifloat8', 'int16', 'int32', 'int4', 'int64', 'int8', 'uint16', 'uint32', 'uint4', 'uint64', 'uint8']",
+          "suggested_fix": "从 supported_chips 移除不兼容的型号，或从 dtype_set / supported_combinations 移除该芯片不支持的 dtype"
+        },
+        {
+          "severity": "error",
+          "rule_id": "paradigm_constraint.dtype_chip_mismatch",
+          "field_path": "op.platform_constraints.supported_chips",
+          "message": "芯片 'Ascend950DT' 不支持以下 dtype: ['float8_e8m0']；已知该芯片支持: ['bfloat16', 'bool', 'complex128', 'complex64', 'float16', 'float32', 'float4_e2m1', 'float64', 'float8_e4m3fn', 'float8_e5m2', 'hifloat8', 'int16', 'int32', 'int4', 'int64', 'int8', 'uint16', 'uint32', 'uint4', 'uint64', 'uint8']",
+          "suggested_fix": "从 supported_chips 移除不兼容的型号，或从 dtype_set / supported_combinations 移除该芯片不支持的 dtype"
+        }
+      ]
+    },
+    {
+      "stage_id": 3,
+      "status": "PASS",
+      "findings": [
+        {
+          "severity": "warning",
+          "rule_id": "shape_closure.unregistered_symbol",
+          "field_path": "shape_constraints.symbols.Dtile",
+          "message": "显式维 'Dtile' 出现在 input 'kv_cache'.shape 但未在 shape_constraints.symbols 登记",
+          "suggested_fix": "在 shape_constraints.symbols 中添加 Dtile: {kind: dim, range: [0, INT64_MAX]}"
+        }
+      ]
+    },
+    {
+      "stage_id": 4,
+      "status": "PASS",
+      "findings": []
+    },
+    {
+      "stage_id": 5,
+      "status": "FAIL",
+      "findings": [
+        {
+          "severity": "error",
+          "rule_id": "broadcast_legality.numpy_violation",
+          "field_path": "broadcast",
+          "message": "broadcast.kind=none 但输入 rank 结构不一致: [T, He] vs [N, D, Hckv]",
+          "suggested_fix": "broadcast.kind='none' 但算子计算需要 broadcast 数据；改为 numpy"
+        }
+      ]
+    },
+    {
+      "stage_id": 6,
+      "status": "FAIL",
+      "findings": [
+        {
+          "severity": "error",
+          "rule_id": "boundary_min_set.missing_required_case",
+          "field_path": "boundary_conditions",
+          "message": "paradigm=ScatterUpdate 缺必含 case: 索引越界 (id=index_out_of_bounds)",
+          "suggested_fix": "在 boundary_conditions 中添加一条 case，加 `tags: [index_out_of_bounds]` 或描述包含以下任一关键词：['索引越界', 'index out of bounds', 'out-of-bound', '越界']"
+        }
+      ]
+    },
+    {
+      "stage_id": 7,
+      "status": "PASS",
+      "findings": []
+    },
+    {
+      "stage_id": 8,
+      "status": "SKIP",
+      "findings": [
+        {
+          "severity": "info",
+          "rule_id": "formula_smoke_eval.skipped_non_numpy",
+          "field_path": "math_semantics.formula_kind",
+          "message": "formula_kind='textual_only'，stage 8 仅在 numpy_expr 下运行",
+          "suggested_fix": null
+        }
+      ]
+    },
+    {
+      "stage_id": 9,
+      "status": "SKIP",
+      "findings": [
+        {
+          "severity": "info",
+          "rule_id": "oracle_reachable.absent",
+          "field_path": "math_semantics.reference_oracle.absent",
+          "message": "oracle 显式声明缺失，stage 9 跳过（语义由 invariants + boundary_conditions 覆盖）",
+          "suggested_fix": null
+        }
+      ]
+    },
+    {
+      "stage_id": 10,
+      "status": "SKIP",
+      "findings": [
+        {
+          "severity": "info",
+          "rule_id": "formula_oracle_equiv.skipped_non_numpy",
+          "field_path": "math_semantics.formula_kind",
+          "message": "formula_kind='textual_only'，stage 10 仅在 numpy_expr 下运行",
+          "suggested_fix": null
+        }
+      ]
+    },
+    {
+      "stage_id": 11,
+      "status": "SKIP",
+      "findings": [
+        {
+          "severity": "info",
+          "rule_id": "invariant_exec.skipped_non_numpy",
+          "field_path": "math_semantics.formula_kind",
+          "message": "formula_kind='textual_only'，stage 11 仅在 numpy_expr 下运行",
+          "suggested_fix": null
+        }
+      ]
+    }
+  ]
+}

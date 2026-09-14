@@ -1,3 +1,9 @@
+# A5 MLA Prolog V3 MXFP4 开发版
+
+本仓新增实验 `weight_quant_mode=6`。**源码及 CPU 检查已完成，CANN 编译和 A5 验证尚未完成。**
+
+直接查看 [MXFP4 实现与一条命令测试说明](README_MXFP4.md)。下面保留原 ops-transformer 项目介绍，其上游支持范围不包含本实验扩展。
+
 # ops-transformer
 
 ## 🔥Latest News

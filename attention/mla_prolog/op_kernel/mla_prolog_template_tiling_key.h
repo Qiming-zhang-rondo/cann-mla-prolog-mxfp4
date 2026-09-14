@@ -61,8 +61,8 @@
 ASCENDC_TPL_ARGS_DECL(mla_prolog, // 算子唯一标识，与opType保持一致
                                   // bit:0-3 CACHE_MODE：0-ND 1-PA_BSND 2-PA_NZ 3-PA_BLK_BSND 4-PA_BLK_NZ
                       ASCENDC_TPL_UINT_DECL(CACHE_MODE, ASCENDC_TPL_4_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3, 4),
-                      // bit:4-5 场景标识：0-FP16(预留) 1-BF16  2-量化场景
-                      ASCENDC_TPL_UINT_DECL(SCENARIO, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2),
+                      // bit:4-5 场景标识：0-FP16(预留) 1-BF16 2-量化场景 3-MXFP4
+                      ASCENDC_TPL_UINT_DECL(SCENARIO, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3),
                       // bit:6-11 量化场景：0-非量化 1-MMQcQr量化 2-MMQcQr量化+KVcache量化 3-MMcqCkvKr量化+MMQcQr量化
                       // 4-MMCqCkvkr量化+MMQcQr量化+KVcache量化 5-MMQcQr量化+KVcache pertoken-pergroup量化
                       // 6-MMCqCkvkr量化+MMQcQr量化+KVcache pertoken-pergroup量化
@@ -91,6 +91,43 @@ ASCENDC_TPL_ARGS_DECL(mla_prolog, // 算子唯一标识，与opType保持一致
                       ASCENDC_TPL_KERNEL_TYPE_DECL(CV_MODE, ASCENDC_TPL_MIX_AIC_1_1, ASCENDC_TPL_MIX_AIC_1_2));
 
 ASCENDC_TPL_SEL(
+
+// MXFP4 uses the previously unused SCENARIO=3; QUANT_MODE stays four bits.
+// Semantic host combinations 16/17 encode as fields 0/1, leaving every old key unchanged.
+#if MLA_PROLOG_VERSION == -1 || MLA_PROLOG_VERSION == 3
+#if ORIG_DTYPE_TOKEN_X == -1 || ORIG_DTYPE_WEIGHT_UQ_QR == -1 || ORIG_DTYPE_KV_CACHE == -1 || \
+    ORIG_DTYPE_DEQUANT_SCALE_X == -1 || \
+    (ORIG_DTYPE_TOKEN_X == DT_FLOAT4_E2M1 && ORIG_DTYPE_WEIGHT_UQ_QR == DT_FLOAT4_E2M1 && \
+     ORIG_DTYPE_KV_CACHE == DT_BF16 && ORIG_DTYPE_DEQUANT_SCALE_X == DT_FLOAT8_E8M0)
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(CACHE_MODE, ASCENDC_TPL_UI_LIST, 1),
+                         ASCENDC_TPL_UINT_SEL(SCENARIO, ASCENDC_TPL_UI_LIST, 3),
+                         ASCENDC_TPL_UINT_SEL(QUANT_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_DEQUANT_OPTIONAL, 1),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_GROUP_COMPUTE_OPTIONAL, 0),
+                         ASCENDC_TPL_UINT_SEL(EMPTY_TENSOR_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_UINT_SEL(ACTUAL_SEQ_LEN_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_UINT_SEL(SPLIT_M_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_ROPE, 1),
+                         ASCENDC_TPL_SHARED_KERNEL_TYPE_SEL(CV_MODE, ASCENDC_TPL_MIX_AIC_1_2),
+                         ASCENDC_TPL_TILING_STRUCT_SEL(optiling::MlaPrologTilingData)),
+#endif
+#if ORIG_DTYPE_TOKEN_X == -1 || ORIG_DTYPE_WEIGHT_UQ_QR == -1 || ORIG_DTYPE_KV_CACHE == -1 || \
+    ORIG_DTYPE_DEQUANT_SCALE_X == -1 || \
+    (ORIG_DTYPE_TOKEN_X == DT_FLOAT4_E2M1 && ORIG_DTYPE_WEIGHT_UQ_QR == DT_FLOAT4_E2M1 && \
+     ORIG_DTYPE_KV_CACHE == DT_FLOAT8_E4M3FN && ORIG_DTYPE_DEQUANT_SCALE_X == DT_FLOAT8_E8M0)
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(CACHE_MODE, ASCENDC_TPL_UI_LIST, 1),
+                         ASCENDC_TPL_UINT_SEL(SCENARIO, ASCENDC_TPL_UI_LIST, 3),
+                         ASCENDC_TPL_UINT_SEL(QUANT_MODE, ASCENDC_TPL_UI_LIST, 1),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_DEQUANT_OPTIONAL, 1),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_GROUP_COMPUTE_OPTIONAL, 0),
+                         ASCENDC_TPL_UINT_SEL(EMPTY_TENSOR_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_UINT_SEL(ACTUAL_SEQ_LEN_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_UINT_SEL(SPLIT_M_MODE, ASCENDC_TPL_UI_LIST, 0),
+                         ASCENDC_TPL_BOOL_SEL(ENABLE_ROPE, 1),
+                         ASCENDC_TPL_SHARED_KERNEL_TYPE_SEL(CV_MODE, ASCENDC_TPL_MIX_AIC_1_2),
+                         ASCENDC_TPL_TILING_STRUCT_SEL(optiling::MlaPrologTilingData)),
+#endif
+#endif
 
 #if MLA_PROLOG_VERSION == -1 || MLA_PROLOG_VERSION >= 1
 // -------------------------- 非量化场景 --------------------------
