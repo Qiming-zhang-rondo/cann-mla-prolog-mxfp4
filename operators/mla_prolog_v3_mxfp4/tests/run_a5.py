@@ -8,9 +8,14 @@ import pathlib
 import subprocess
 import time
 
+# The launcher selects one private vendor before Python startup. Keep that
+# selection if an explicitly imported backend modifies the environment again.
+_selected_opp = os.environ.get('ASCEND_CUSTOM_OPP_PATH')
 import numpy as np
 import torch
 import torch_npu
+if _selected_opp is not None:
+    os.environ['ASCEND_CUSTOM_OPP_PATH'] = _selected_opp
 cann_ops_transformer = importlib.import_module(
     os.environ.get('MLA_MXFP4_TORCH_PACKAGE', 'cann_ops_transformer_mla_mxfp4'))
 

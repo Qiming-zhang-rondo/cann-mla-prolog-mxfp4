@@ -16,6 +16,8 @@ git clone --depth 1 https://github.com/Qiming-zhang-rondo/cann-mla-prolog-mxfp4.
 
 安装的 Python 包为 `cann_ops_transformer_mla_mxfp4`，OPP 为 `mla_mxfp4_transformer`；自定义库优先级只在测试进程内生效。默认 SoC 为 `ascend950`，可用 `MLA_MXFP4_SOC` 指定实际编译目标；必须使用 A5 / arch35，A3 不在实现范围内。`MAX_JOBS` 可控制编译并行度。
 
+入口会在第一个 Python 进程启动前关闭 FLA `.pth` 注入和 torch 自动 backend 加载，显式导入 torch_npu 后恢复本次私有 OPP。日志分别显示 V3 workspace 与 compute API 所属库，并拒绝二者来自不同库；这不能单独证明设备 kernel 的来源或正确性。仅构建 wheel 时保留刚完成的算子构建目录。
+
 已有目录更新后重测：
 
 ```bash
@@ -42,4 +44,4 @@ python3 -m unittest discover -s operators/mla_prolog_v3_mxfp4/tests -p 'test_*.p
 python3 attention/mla_prolog_v3/tests/ut/op_kernel/test_mxfp4_storage_contract.py -v
 ```
 
-前一组需要 numpy 和 torch；两组共 12 项测试已在 CPU 通过。另新增 C++ Host UT，但未在 CANN 环境中编译运行。CPU 测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。
+前一组需要 numpy 和 torch；两组共 15 项测试已在开发机通过，包括真实 C++ 标量对齐表达式的编译和执行回归（需要 clang++ 或 g++），以及 Python 启动隔离测试。另有 C++ Host UT，尚未在 CANN 环境中编译运行。这些本地测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。

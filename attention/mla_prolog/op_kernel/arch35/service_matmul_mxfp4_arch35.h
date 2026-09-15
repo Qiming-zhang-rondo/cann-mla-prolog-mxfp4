@@ -51,7 +51,7 @@ __aicore__ inline void MatmulMxFp4SplitK(
     mmLocalTensors<uint8_t, float> local;
     local.Init(buf);
     const uint32_t mAlign = Align(p.m, BLOCK_CUBE_SIZE);
-    const uint32_t scaleStrideA = paddedAScale ? Align(p.kScale, BYTE_BLOCK) : p.kScale;
+    const uint32_t scaleStrideA = paddedAScale ? Align(p.kScale, static_cast<uint32_t>(BYTE_BLOCK)) : p.kScale;
     const uint32_t cIdx = buf.cL0BufIter & 1u;
     auto cL0 = local.cL0Tensor[cIdx * L0C_PP_SIZE / sizeof(float)];
     WaitFlag<HardEvent::FIX_M>(L0C_EVENT0 + cIdx);

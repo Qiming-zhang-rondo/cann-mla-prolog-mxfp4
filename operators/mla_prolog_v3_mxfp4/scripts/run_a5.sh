@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Build and test this checkout, leaving system CANN installation intact.
 set -euo pipefail
+# Disable Python startup injection before the first Python process is launched.
+export FLA_NPU_DISABLE_PTH=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 task_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 task_repo=$(cd -- "$task_script_dir/../../.." && pwd)
 cd "$task_repo"
@@ -27,10 +30,10 @@ mapfile -t task_packages < <(python3 -c 'import pathlib; print("\n".join(str(p) 
 [[ ${#task_packages[@]} == 1 ]] || { echo 'Expected exactly one fresh .run package in build_out.' >&2; exit 1; }
 bash "${task_packages[0]}" --quiet --install-path="$task_install"
 task_opp=$(python3 -c 'import pathlib,sys; roots={str(p.parent.parent.parent) for p in pathlib.Path(sys.argv[1]).rglob("libcust_opapi.so")}; assert len(roots)==1, f"Expected one custom OPP root, got {roots}"; print(roots.pop())' "$task_install")
-export ASCEND_CUSTOM_OPP_PATH="$task_opp${ASCEND_CUSTOM_OPP_PATH:+:$ASCEND_CUSTOM_OPP_PATH}"
+export ASCEND_CUSTOM_OPP_PATH="$task_opp"
 export LD_LIBRARY_PATH="$task_opp/op_api/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 echo "Using custom OPP: $task_opp"
-bash build.sh --torch_extension --ops=mla_prolog_v3 --vendor_name=mla_mxfp4
+bash build.sh --torch_extension --ops=mla_prolog_v3 --vendor_name=mla_mxfp4 --incremental
 mapfile -t task_wheels < <(python3 -c 'import pathlib; print("\n".join(str(p) for p in pathlib.Path("build_out").glob("cann_ops_transformer_mla_mxfp4-*.whl")))')
 [[ ${#task_wheels[@]} == 1 ]] || { echo 'Expected exactly one extension wheel.' >&2; exit 1; }
 python3 -m pip install --no-deps --force-reinstall "${task_wheels[0]}"

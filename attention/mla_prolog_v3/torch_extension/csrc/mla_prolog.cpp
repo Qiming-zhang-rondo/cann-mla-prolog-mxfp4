@@ -502,10 +502,16 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> mla_prolo
     const c10::optional<at::Tensor> acl_rope_cos = do_rope ? rope_cos : c10::nullopt;
     if (is_mxfp4) {
         void *v3_api = GetOpApiFuncAddr("aclnnMlaPrologV3WeightNzGetWorkspaceSize");
-        TORCH_CHECK(v3_api != nullptr, "custom V3 API unavailable; MXFP4 never falls back to V4/native");
+        void *v3_compute = GetOpApiFuncAddr("aclnnMlaPrologV3WeightNz");
+        TORCH_CHECK(v3_api != nullptr && v3_compute != nullptr,
+                    "custom V3 workspace/compute API unavailable; MXFP4 never falls back to V4/native");
         Dl_info api_info{};
-        if (dladdr(v3_api, &api_info) != 0) {
-            TORCH_WARN_ONCE("MXFP4 mode=6 calls aclnnMlaPrologV3WeightNz from ", api_info.dli_fname);
+        Dl_info compute_info{};
+        if (dladdr(v3_api, &api_info) != 0 && dladdr(v3_compute, &compute_info) != 0) {
+            TORCH_CHECK(api_info.dli_fbase == compute_info.dli_fbase,
+                        "MXFP4 V3 workspace and compute APIs resolved to different libraries");
+            TORCH_WARN_ONCE("MXFP4 mode=6 aclnnMlaPrologV3WeightNzGetWorkspaceSize from ", api_info.dli_fname,
+                            "; aclnnMlaPrologV3WeightNz from ", compute_info.dli_fname);
         }
         auto dq_nz = MakePackedMxfp4NzDescriptor(weight_dq);
         auto uq_nz = MakePackedMxfp4NzDescriptor(weight_uq_qr);
