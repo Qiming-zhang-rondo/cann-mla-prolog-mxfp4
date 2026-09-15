@@ -71,12 +71,12 @@ def rms(x,gamma,cast_bf16=True):
 
 
 def rope(x,cos,sin):
-    # Prolog RopeVFImpl accepts signed half-split sin; raw weight columns stay
-    # interleaved. Output matches GLM interleave after even/odd->half permutation.
+    # Public API sin is [sin,sin]. GatherSinCos supplies the lower-half minus
+    # inside Prolog; the native reference performs that rotation sign here.
     c=cos.float();s=sin.float()
     while c.ndim<x.ndim:c=c.unsqueeze(1);s=s.unsqueeze(1)
     e,o=x.float()[...,::2],x.float()[...,1::2];h=x.shape[-1]//2
-    return torch.cat((e*c[...,:h]+o*s[...,:h],o*c[...,h:]+e*s[...,h:]),-1).to(torch.bfloat16)
+    return torch.cat((e*c[...,:h]-o*s[...,:h],o*c[...,h:]+e*s[...,h:]),-1).to(torch.bfloat16)
 
 
 def native(data,kv_mode):
@@ -166,7 +166,7 @@ def main():
             p,s=quant_rows(x)
             angle=(torch.arange(tokens)[:,None]+1)*torch.exp(-torch.arange(32)[None,:]/8)
             cos=torch.cat((angle.cos(),angle.cos()),-1).to(torch.bfloat16).to(args.device)
-            sin=torch.cat((-angle.sin(),angle.sin()),-1).to(torch.bfloat16).to(args.device)
+            sin=torch.cat((angle.sin(),angle.sin()),-1).to(torch.bfloat16).to(args.device)
             data=dict(ws,p=p,scale=s,uk=uk,heads=heads,cos=cos,sin=sin,
                 gamma_q=(torch.rand(2048,generator=gen)+.5).to(torch.bfloat16).to(args.device),
                 gamma_k=(torch.rand(512,generator=gen)+.5).to(torch.bfloat16).to(args.device))

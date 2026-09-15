@@ -80,9 +80,12 @@ def rmsnorm_bf16(x, gamma, eps=1e-5):
     return bf16_round(a / np.sqrt(np.mean(a*a, axis=-1, keepdims=True) + eps) * gamma)
 
 
-def prolog_rope(x, cos, signed_sin):
-    """RopeVFImpl: interleaved input -> half-split output; sin=[-sin,+sin]."""
+def prolog_rope(x, cos, sin):
+    """Public Prolog API: interleaved input -> halves; raw sin=[sin,sin].
+
+    GatherSinCos negates the lower half internally before RopeVFImpl.
+    """
     even, odd = x[..., ::2], x[..., 1::2]
     h = x.shape[-1] // 2
-    return np.concatenate((even*cos[..., :h] + odd*signed_sin[..., :h],
-                           odd*cos[..., h:] + even*signed_sin[..., h:]), axis=-1)
+    return np.concatenate((even*cos[..., :h] - odd*sin[..., :h],
+                           odd*cos[..., h:] + even*sin[..., h:]), axis=-1)

@@ -16,7 +16,7 @@
 | weightDq / weightUqQr / weightDkvKr | 分别为逻辑 `[He,Hcq]`、`[Hcq,N*(D+Dr)]`、`[He,Hckv+Dr]`；非转置 A4W4 FRACTAL_NZ，逻辑 storage `[Nout/64,K/16,16,64]`；torch 入口为已完成 NZ 排列的 uint8 `[Nout/64,K/16,16,32]`，普通 ND reshape 不能生成 NZ |
 | dequantScaleX | 连续 ND E8M0 `[T,He/32]` |
 | dequantScaleWDq / WUqQr / WDkvKr | 连续 ND E8M0 `[Hcq,He/32]`、`[N*(D+Dr),Hcq/32]`、`[Hckv+Dr,He/32]`；每输出通道的 K32 scales 连续，两个相邻 K32 构成一对 |
-| weightUk / gamma / sin、cos | BF16；`weightUk[N,D,512]`，gamma `[Hcq]` / `[512]`，sin、cos `[T,64]`；RMSNorm epsilon 沿用现有正值校验 |
+| weightUk / gamma / sin、cos | BF16；`weightUk[N,D,512]`，gamma `[Hcq]` / `[512]`，sin、cos `[T,64]`，分别为 `[sin,sin]` / `[cos,cos]`；不要在 GM 输入中预先对 sin 前半取反，`GatherSinCos` 会在 kernel 内完成；RMSNorm epsilon 沿用现有正值校验 |
 | query / queryRope | BF16 `[T,N,512]` / `[T,N,64]` |
 | queryNorm | flag=true 时 BF16 `[T,Hcq]`，取 RMSNorm 后、内部 FP4 量化前的值；flag=false 时空 BF16 `[0]`；不从 FP4 反量化恢复该输出 |
 | dequantScaleQNope / dequantScaleQNorm | 均为空；ACLNN 调用传 nullptr，内部 TensorHolder/IR 为 FLOAT `[0]`；本仓 torch 测试 wrapper 返回空 FLOAT tensor，非 None |

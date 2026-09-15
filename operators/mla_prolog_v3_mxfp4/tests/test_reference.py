@@ -38,7 +38,7 @@ class ContractTests(unittest.TestCase):
     def test_rope_matches_glm_interleave_after_layout_permutation(self):
         rng=np.random.default_rng(91);x=rng.normal(size=(3,64))
         a=rng.uniform(-2,2,size=(3,32));c=np.cos(a);s=np.sin(a)
-        y=prolog_rope(x,np.concatenate((c,c),-1),np.concatenate((-s,s),-1))
+        y=prolog_rope(x,np.concatenate((c,c),-1),np.concatenate((s,s),-1))
         expected=np.empty_like(x)
         expected[:,::2]=x[:,::2]*c-x[:,1::2]*s
         expected[:,1::2]=x[:,1::2]*c+x[:,::2]*s
