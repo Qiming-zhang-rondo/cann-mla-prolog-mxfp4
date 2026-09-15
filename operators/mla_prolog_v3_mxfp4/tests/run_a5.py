@@ -19,7 +19,7 @@ if _selected_opp is not None:
 cann_ops_transformer = importlib.import_module(
     os.environ.get('MLA_MXFP4_TORCH_PACKAGE', 'cann_ops_transformer_mla_mxfp4'))
 
-from reference import pack_nz_from_codes, unpack_codes, prolog_to_matmul_scale, dequant_rows
+from reference import pack_nz_from_codes, unpack_codes, dequant_rows
 
 ACCURACY_RECORDS = []
 CASE_CONTEXT = {}
@@ -30,6 +30,19 @@ def quant_rows(x):
     return p.view(torch.uint8),s.reshape(x.shape[0],-1).view(torch.float8_e8m0fnu)
 
 
+def native_weight_views(packed_rows, row_scales):
+    # QuantMatmul checks transpose state through strides, not only shape.
+    # Match VA W4A4: [N,K/2].T and [N,K/64,2].transpose(0,1).
+    return {'native':packed_rows.transpose(0,1),
+            'native_scale':row_scales.reshape(row_scales.shape[0],-1,2).transpose(0,1)}
+
+
+def fused_native_weight(weights):
+    # Concatenate output channels while both inputs are still in row storage.
+    return native_weight_views(torch.cat([w['row_packed'] for w in weights],dim=0),
+                               torch.cat([w['scale'] for w in weights],dim=0))
+
+
 def weight(k,n,generator,device):
     # Channel AND K-block variation exposes wrong transpose/view scale producers.
     w=torch.randn(n,k,generator=generator,dtype=torch.float32)
@@ -38,8 +51,7 @@ def weight(k,n,generator,device):
     p,s=quant_rows(w)
     codes=unpack_codes(p.cpu().numpy()).T.copy()
     nz=torch.from_numpy(pack_nz_from_codes(codes)).to(device)
-    scale_pair=torch.from_numpy(prolog_to_matmul_scale(s.view(torch.uint8).cpu().numpy())).to(device).view(torch.float8_e8m0fnu)
-    return {'nz':nz,'scale':s.contiguous(),'native':p.T,'native_scale':scale_pair,'row_packed':p}
+    return dict(nz=nz,scale=s.contiguous(),row_packed=p,**native_weight_views(p,s))
 
 
 def mm(p,s,w):
@@ -132,6 +144,8 @@ def main():
     parser.add_argument('--heads',type=int,nargs='+',default=[4,8]);parser.add_argument('--warmup',type=int,default=5)
     parser.add_argument('--iterations',type=int,default=20);parser.add_argument('--device',default='npu:0')
     parser.add_argument('--output',default='mla_mxfp4_a5_results.json');args=parser.parse_args()
+    if not callable(getattr(cann_ops_transformer.ops,'mla_prolog_v3',None)):
+        raise RuntimeError('Private extension did not export callable ops.mla_prolog_v3; rebuild its Python wheel')
     if not torch.npu.is_available():raise RuntimeError('NPU unavailable; this test never falls back to CPU')
     if any(t<1 or t>128 for t in args.tokens):raise ValueError('mode6 scope T=1..128')
     torch.npu.set_device(args.device)
@@ -144,8 +158,7 @@ def main():
     for heads in args.heads:
         ws={name:weight(k,n,gen,args.device) for name,k,n in [('dq',6144,2048),('uq',2048,heads*256),('dkv',6144,576)]}
         # Concatenate in output-channel order before the one native QKV matmul.
-        ws['fused_down']={'native':torch.cat((ws['dq']['row_packed'],ws['dkv']['row_packed']),dim=0).T,
-                          'native_scale':torch.cat((ws['dq']['native_scale'],ws['dkv']['native_scale']),dim=1).contiguous()}
+        ws['fused_down']=fused_native_weight([ws['dq'],ws['dkv']])
         uk=(torch.randn(heads,192,512,generator=gen)/np.sqrt(192)).to(torch.bfloat16).to(args.device)
         for tokens in args.tokens:
             CASE_CONTEXT.clear();CASE_CONTEXT.update(T=tokens,heads=heads)
@@ -179,7 +192,7 @@ def main():
                     before=cache.view(torch.uint8).clone();kr_before=kr.view(torch.uint8).clone()
                     def fused(include_quant=False):
                         px,sx=quant_rows(x) if include_quant else (p,s)
-                        return cann_ops_transformer.ops.mla_prolog(px,ws['dq']['nz'],ws['uq']['nz'],uk,ws['dkv']['nz'],
+                        return cann_ops_transformer.ops.mla_prolog_v3(px,ws['dq']['nz'],ws['uq']['nz'],uk,ws['dkv']['nz'],
                             data['gamma_q'],data['gamma_k'],cache,kr,rope_sin=sin,rope_cos=cos,cache_index=slots,
                             dequant_scale_x=sx,dequant_scale_w_dq=ws['dq']['scale'],dequant_scale_w_uq_qr=ws['uq']['scale'],
                             dequant_scale_w_dkv_kr=ws['dkv']['scale'],weight_quant_mode=6,kv_cache_quant_mode=mode,

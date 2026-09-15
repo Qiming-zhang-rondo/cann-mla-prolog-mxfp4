@@ -27,6 +27,10 @@ def _discover_ops_from_entry_points():
             else eps.get("cann_ops_transformer.ops", [])
         )
         for ep in eps:
+            if __name__ != "cann_ops_transformer.ops" and not ep.value.split(":", 1)[0].startswith(
+                __name__ + "."
+            ):
+                continue
             ops[ep.name] = ep.value
     except (ImportError, RuntimeError, AttributeError):
         pass
@@ -67,6 +71,9 @@ def _load_op(name, target):
                 globals()[name] = getattr(_mod, name)
             else:
                 globals()[name] = _mod
+            for _extra in getattr(_mod, "__all__", []):
+                if _extra != name and not _extra.startswith("_"):
+                    globals()[_extra] = getattr(_mod, _extra)
         except (ImportError, RuntimeError, AttributeError) as e:
             logger.warning("Failed to load op '%s': %s", name, e)
         return

@@ -24,6 +24,14 @@ git clone --depth 1 https://github.com/Qiming-zhang-rondo/cann-mla-prolog-mxfp4.
 git pull --ff-only && bash test_mla_mxfp4.sh
 ```
 
+已经成功编译并安装过本分支的 CANN 算子、此次仅更新 Python 包或测试时，复用最近一次完整私有安装：
+
+```bash
+git pull --ff-only && bash test_mla_mxfp4.sh --reuse-op
+```
+
+`--reuse-op` 跳过 CANN 算子编译和安装，仅重打包/安装本地 Python wheel 并运行测试。它从 `.a5-install/` 选择最近一个含 `mla_mxfp4_transformer` 库的安装；若指定 `MLA_MXFP4_INSTALL_DIR` 则只使用该路径。找不到安装会报错，不自动开始编译。修改 kernel/host/API 后须去掉该参数重建。首次成功调用时仍可能 JIT 编译 torch C++ 绑定，这与重新编译 CANN kernel 不同。日志输出所复用的路径。
+
 结果保存在仓库根目录：带时间戳的 `mla_mxfp4_a5_*.log`，成功时 `mla_mxfp4_a5_results.json`，测试失败时 `mla_mxfp4_a5_failure.json`。日志记录实际加载的 V3 API 共享库；精度失败返回非零退出码。默认测试 T=1/17、TP 后头数=4/8、KV0/3、queryNorm 两种 flag；可运行 `bash test_mla_mxfp4.sh --tokens 1 17 128` 增加边界用例。
 
 精度结果包含 query、RoPE、BF16 queryNorm、cache 和 scale；性能包含预量化融合耗时、含输入量化的融合耗时、native 计算以及含量化/cache copy 的完整对照，报告 P50/P90。容差为初步单算子验收门槛，性能是连续 slot 的单算子实验结果，均不代表 GLM 模型精度或吞吐已经验收。
@@ -44,4 +52,4 @@ python3 -m unittest discover -s operators/mla_prolog_v3_mxfp4/tests -p 'test_*.p
 python3 attention/mla_prolog_v3/tests/ut/op_kernel/test_mxfp4_storage_contract.py -v
 ```
 
-前一组需要 numpy 和 torch；两组共 15 项测试已在开发机通过，包括真实 C++ 标量对齐表达式的编译和执行回归（需要 clang++ 或 g++），以及 Python 启动隔离测试。另有 C++ Host UT，尚未在 CANN 环境中编译运行。这些本地测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。
+前一组需要 numpy、torch 和 setuptools 的 wheel 打包能力；两组共 22 项测试已在开发机通过，包括真实 C++ 标量对齐表达式的编译和执行回归（需要 clang++ 或 g++）、Python 启动隔离、native 权重/scale stride、真实 wheel 导出导入，以及复用算子的 shell 流程。另有 C++ Host UT，尚未在 CANN 环境中编译运行。这些本地测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。
