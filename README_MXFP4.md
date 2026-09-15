@@ -2,7 +2,7 @@
 
 为 GLM-5.2 / 同结构的 GLM-5.3 扩展 CANN `MlaPrologV3`，新增本分支专用 `weight_quant_mode=6`：FP4 E2M1 激活和三个量化投影权重、K32 E8M0 scale、真实 FP4 Cube 计算与内部 RMSNorm 后 FP4 再量化。`weightUk` 和外部 `query_norm` 保持 BF16，KV cache 支持现有 BF16 / FP8 两种模式。
 
-**当前状态：源码实现、CPU 契约测试及源码交叉检查完成；CANN 编译、A5 精度/性能、GLM 端到端均未验证。** 此仓提供单算子开发和验收入口，vLLM-Ascend 的自动路由还没有接入此扩展。
+**当前状态：用户 A5 日志已确认 CANN 算子和 torch C++ 绑定编译成功，native DQ 与解码参考一致；自定义 Prolog 精度/性能、GLM 端到端尚未通过验证。** 最新修复针对首次 Prolog 调用中的 NZ 描述符维数错误，待 A5 重测。此仓提供单算子开发和验收入口，vLLM-Ascend 的自动路由还没有接入此扩展。
 
 ## A5 一条命令
 
@@ -24,7 +24,7 @@ git clone --depth 1 https://github.com/Qiming-zhang-rondo/cann-mla-prolog-mxfp4.
 git pull --ff-only && bash test_mla_mxfp4.sh
 ```
 
-已经成功编译并安装过本分支的 CANN 算子、此次仅更新 Python 包或测试时，复用最近一次完整私有安装：
+已经成功编译并安装过本分支的 CANN 算子、此次仅更新 Python 包、torch C++ 绑定或测试时，复用最近一次完整私有安装：
 
 ```bash
 git pull --ff-only && bash test_mla_mxfp4.sh --reuse-op
@@ -52,4 +52,4 @@ python3 -m unittest discover -s operators/mla_prolog_v3_mxfp4/tests -p 'test_*.p
 python3 attention/mla_prolog_v3/tests/ut/op_kernel/test_mxfp4_storage_contract.py -v
 ```
 
-前一组需要 numpy、torch 和 setuptools 的 wheel 打包能力；两组共 22 项测试已在开发机通过，包括真实 C++ 标量对齐表达式的编译和执行回归（需要 clang++ 或 g++）、Python 启动隔离、native 权重/scale stride、真实 wheel 导出导入，以及复用算子的 shell 流程。另有 C++ Host UT，尚未在 CANN 环境中编译运行。这些本地测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。
+前一组需要 numpy、torch 和 setuptools 的 wheel 打包能力；两组共 23 项测试已在开发机通过，包括真实 C++ 标量对齐表达式和 NZ 描述符函数的编译执行回归（需要 clang++ 或 g++）、Python 启动隔离、native 权重/scale stride、真实 wheel 导出导入，以及复用算子的 shell 流程。另有 C++ Host UT，尚未在 CANN 环境中编译运行。这些本地测试不会执行 Ascend C kernel，也不能证明设备寻址、同步或 FP4 指令行为。

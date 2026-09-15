@@ -379,19 +379,16 @@ inline aclDataType ResolveTensorAclDtype(const at::Tensor &tensor, bool force_hi
 }
 
 // Explicit byte-packed A4W4 NZ input: [N/64,K/16,16,32] bytes.
-// Unlike the generic TensorWrapper this preserves both the logical 2D shape
-// and the physical 4D NZ descriptor. No format-cast or second nibble expansion.
+// The direct WeightNz ACLNN entry uses physical NZ dimensions for both ACL
+// shapes, as in examples/arch35/test_aclnn_mla_prolog_v3_fqkvq.cpp::CreateAclTensorNZ.
+// Dimensions count FP4 elements, so only the byte container's last axis doubles.
 aclTensor *MakePackedMxfp4NzDescriptor(const at::Tensor &weight)
 {
     static const auto create = GET_OP_API_FUNC(aclCreateTensor);
     TORCH_CHECK(create != nullptr, "aclCreateTensor is unavailable");
-    const int64_t k = weight.size(1) * 16;
-    const int64_t n = weight.size(0) * 64;
-    const int64_t shape[] = {k, n};
-    const int64_t strides[] = {n, 1};
-    const int64_t storage[] = {weight.size(0), weight.size(1), 16, 64};
-    return create(shape, 2, ACL_FLOAT4_E2M1, strides, weight.storage_offset() * 2,
-                  ACL_FORMAT_FRACTAL_NZ, storage, 4, const_cast<void *>(weight.storage().data()));
+    const int64_t nzShape[] = {weight.size(0), weight.size(1), 16, 64};
+    return create(nzShape, 4, ACL_FLOAT4_E2M1, nullptr, weight.storage_offset() * 2,
+                  ACL_FORMAT_FRACTAL_NZ, nzShape, 4, const_cast<void *>(weight.storage().data()));
 }
 
 void CheckMxfp4PackedWeight(const at::Tensor &w, int64_t k, int64_t n, const char *name)

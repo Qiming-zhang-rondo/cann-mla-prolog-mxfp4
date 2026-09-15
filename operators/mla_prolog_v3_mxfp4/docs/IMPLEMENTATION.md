@@ -1,6 +1,6 @@
 # MlaPrologV3 MXFP4 当前实现
 
-2026-09-14。**本分支已加入 mode6 的 API、host、kernel、torch 测试入口和验证脚本；尚未通过 CANN 编译或 A5 运行验收。** mode6 是本扩展新增值，上游基线不接受该值。本文记录已写入代码的契约；[REQUIREMENTS.md](REQUIREMENTS.md) 和 [接口草案](aclnnMlaPrologV3WeightNz.md) 保留的是最初需求提案。
+2026-09-15 更新。**本分支已加入 mode6 的 API、host、kernel、torch 测试入口和验证脚本；用户 A5 日志确认 CANN 算子和 torch C++ 绑定编译成功，自定义 Prolog 精度/性能仍待验收。** mode6 是本扩展新增值，上游基线不接受该值。本文记录已写入代码的契约；[REQUIREMENTS.md](REQUIREMENTS.md) 和 [接口草案](aclnnMlaPrologV3WeightNz.md) 保留的是最初需求提案。
 
 目标是 MLA 三组投影的 W4A4 MXFP4 融合。三组投影直接使用 FP4 Cube，内部 Q RMSNorm 后再量化为 FP4；`weightUk`、query、queryRope 和对外 queryNorm 保持 BF16。这里没有新增 FP4 KV cache，也没有修改 Indexer QLI。尚未把此 CANN 扩展接入 VA 的 GLM 路由，因此不能据此宣称完整模型已走 fused MXFP4 Prolog。
 
@@ -22,7 +22,7 @@
 | dequantScaleQNope / dequantScaleQNorm | 均为空；ACLNN 调用传 nullptr，内部 TensorHolder/IR 为 FLOAT `[0]`；本仓 torch 测试 wrapper 返回空 FLOAT tensor，非 None |
 | cacheIndex | INT64 `[T]`；合法 slot 或 -1 哨兵。合法值范围 `[0,Pages*Block)` 是调用者前置条件，host 不读取 device slot 值，不能承诺越界 slot 返回 host 错误 |
 
-FP4 ACL 的逻辑 shape、stride、offset 以逻辑元素计，内存分配和 byte DMA 以两个元素/byte 计。权重 wrapper 单独构造逻辑2D/storage4D NZ descriptor，避免通用4D byte wrapper误判格式或再次扩展 nibble。QuantMatmul 非转置权重 scale `[K/64,Nout,2]` 必须重排为本算子的 `[Nout,K/32]`，不能直接 view。测试 producer/consumer 的转换见 `tests/reference.py`。
+FP4 ACL 的 shape、stride、offset 以逻辑元素计，内存分配和 byte DMA 以两个元素/byte 计。直连 WeightNz ACLNN 的权重 wrapper 将 view 和 storage 都设为四维 `[Nout/64,K/16,16,64]`，strides 为 nullptr，对齐官方 `attention/mla_prolog_v3/examples/arch35/test_aclnn_mla_prolog_v3_fqkvq.cpp::CreateAclTensorNZ`。底层 uint8 容器末轴仍为32，不再转换或重新打包。先前二维 view/四维 storage 在 A5 的 tiling 中被视为二维，触发 mode6 的四维校验；此修复只改直连 wrapper，不改变图模式的二维原始 shape 规则。QuantMatmul 权重 scale 的 `[K/64,Nout,2]` 与本算子的 `[Nout,K/32]` 排列不同，转换必须保留数据对应关系；测试 producer/consumer 见 `tests/reference.py` 和 `run_a5.py::native_weight_views`。
 
 | 缓存模式 | 原地写入 contract |
 |---|---|
@@ -70,6 +70,6 @@ Host 语义组合 enum 追加16/17，但不将其塞入旧4-bit字段。`SCENARI
 
 本地已执行：8项 Python contract/metadata 测试、4项 kernel CPU storage 测试、Python 语法和 shell 语法检查、`git diff --check`；另静态确认旧 key selectors/位宽、A2/A3 IR、原 A5 dtype 列、V4 API 和 tiling data 未改变。新增6组 C++ Host UT 已写入但未编译运行。详见 [CPU记录](../tests/reports/CPU_VALIDATION.md)、[Host记录](../tests/reports/HOST_IMPLEMENTATION.md)、[Kernel记录](../tests/reports/KERNEL_IMPLEMENTATION.md)。
 
-未执行：CANN/Ascend C/C++ wrapper 编译、A5 精度和性能、完整旧模式 Host UT、graph capture/replay、GLM/Indexer 消费与模型端到端。通用 spec validator 的 FAIL/SKIP 如实保留，见 [SPEC_VALIDATION.md](../tests/reports/SPEC_VALIDATION.md)。当前 BF16 数值阈值是 runner 的初步门槛，不是已验证的模型精度承诺。
+后续本地回归及 A5 反馈见 [LOG.md](LOG.md)。A5 已完成 CANN 算子和 C++ wrapper 编译，native DQ 解码参考检查通过；自定义 Prolog 调用仍在排障，尚无融合算子精度或性能通过结果。完整旧模式 Host UT、graph capture/replay、GLM/Indexer 消费与模型端到端也未验收。通用 spec validator 的 FAIL/SKIP 如实保留，见 [SPEC_VALIDATION.md](../tests/reports/SPEC_VALIDATION.md)。当前 BF16 数值阈值是 runner 的初步门槛，不是已验证的模型精度承诺。
 
 A5 在已拉取本分支的容器执行 `bash operators/mla_prolog_v3_mxfp4/scripts/run_a5.sh`，构建并加载本地自定义算子、独立 torch 扩展包后运行对比；具体环境要求、用例及计时范围见 [TEST.md](TEST.md)。首次设备验证重点是 SDK FP4 descriptor/LoadData 编译、NZ/scale 地址、ROUND 规则、AIC/AIV 同步、queryNorm 与 KV3 的 BF16 边界。
