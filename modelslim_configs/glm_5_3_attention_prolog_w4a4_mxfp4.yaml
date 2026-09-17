@@ -1,0 +1,92 @@
+# Experimental GLM-5.3 recipe for validating the private A5 MLA Prolog V3
+# weight_quant_mode=6 path. GLM-5.3 is assumed to use the same attention
+# structure as GLM-5.2, as confirmed by the model owner.
+apiversion: modelslim_v1
+metadata:
+  config_id: glm_5_3_attention_prolog_w4a4_mxfp4
+  score: 0.0
+  label:
+    w_bit: 4
+    a_bit: 4
+    is_sparse: False
+    kv_cache: False
+
+default_w8a8_mxfp_dynamic:
+  &default_w8a8_mxfp_dynamic
+  act:
+    scope: per_block
+    dtype: mxfp8
+    symmetric: True
+    method: minmax
+  weight:
+    scope: per_block
+    dtype: mxfp8
+    symmetric: True
+    method: minmax
+
+default_w4a4_mxfp_dynamic:
+  &default_w4a4_mxfp_dynamic
+  act:
+    scope: per_block
+    dtype: mxfp4
+    symmetric: True
+    method: minmax
+  weight:
+    scope: per_block
+    dtype: mxfp4
+    symmetric: True
+    method: minmax
+
+spec:
+  process:
+  - type: quarot
+    export_extra_info: True
+
+  - type: flex_smooth_quant
+    enable_subgraph_type:
+    - norm-linear
+    - ov
+    include:
+    - '*'
+
+  # Keep the rest of self-attention on the official MXFP8 baseline. The three
+  # projections excluded here are quantized to MXFP4 by the next rule and are
+  # precisely the weights consumed by private MLA Prolog V3 mode 6.
+  - type: linear_quant
+    qconfig: *default_w8a8_mxfp_dynamic
+    include:
+    - '*self_attn*'
+    exclude:
+    - '*q_a_proj'
+    - '*kv_a_proj_with_mqa'
+    - '*q_b_proj'
+    - '*kv_b_proj'
+    - '*wk'
+    - '*weights_proj'
+
+  - type: linear_quant
+    qconfig: *default_w4a4_mxfp_dynamic
+    include:
+    - '*self_attn.q_a_proj'
+    - '*self_attn.kv_a_proj_with_mqa'
+    - '*self_attn.q_b_proj'
+
+  # Preserve the official GLM-5.2 W4A4 recipe outside attention so the only
+  # attention-side change under test is the private Prolog projection group.
+  - type: linear_quant
+    qconfig: *default_w8a8_mxfp_dynamic
+    include:
+    - '*mlp*'
+    exclude:
+    - '*gate'
+    - '*mlp.experts.*'
+
+  - type: linear_quant
+    qconfig: *default_w4a4_mxfp_dynamic
+    include:
+    - '*mlp.experts.*'
+
+  dataset: qwen3_cot_w4a4.json
+  save:
+  - type: ascendv1_saver
+    part_file_size: 4
