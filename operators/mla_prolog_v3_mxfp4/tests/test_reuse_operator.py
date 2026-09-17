@@ -69,7 +69,7 @@ class ReuseOperatorTests(unittest.TestCase):
         # The fake build never imports them or builds a real wheel.
         module_stubs = self.repo / "module-stubs"
         module_stubs.mkdir()
-        for name in ("build", "setuptools", "wheel"):
+        for name in ("setuptools", "wheel"):
             (module_stubs / f"{name}.py").write_text(
                 "# Discovery-only test substitute.\n"
             )

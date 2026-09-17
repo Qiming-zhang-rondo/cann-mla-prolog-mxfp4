@@ -853,11 +853,12 @@ function build_torch_extension_whl() {
         log "[INFO] Building torch_extension whl package..."
         cd "${torch_ext_dir}"
 
-        # 检查 build 模块是否可用
-        if ! python3 -c "import build" 2>/dev/null; then
-            log "[WARNING] Python build module not found, skipping whl build"
-            cd "${original_dir}"
-            return 0
+        # Reuse installed packaging tools; never install a build frontend here.
+        # A stale build/ directory can satisfy `import build` as a namespace.
+        local wheel_command=(python3 -m build --wheel -n)
+        if ! python3 -c "import build.__main__" 2>/dev/null; then
+            log "[INFO] Python build module unavailable; using installed setuptools/wheel"
+            wheel_command=(python3 setup.py bdist_wheel)
         fi
 
         if [[ -n "${ascend_op_name}" ]]; then
@@ -873,7 +874,7 @@ function build_torch_extension_whl() {
             unset TORCH_EXTENSION_VENDOR
         fi
 
-        python3 -m build --wheel -n 2>&1 || {
+        "${wheel_command[@]}" 2>&1 || {
             log "[ERROR] Failed to build torch_extension whl package"
             cd "${original_dir}"
             return 1

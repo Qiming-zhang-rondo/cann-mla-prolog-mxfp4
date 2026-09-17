@@ -28,7 +28,7 @@ if [[ -z ${ASCEND_HOME_PATH:-} ]]; then
   set -u
 fi
 python3 -c 'import torch, torch_npu; assert torch.npu.is_available(), "NPU unavailable"; print("Device:", torch.npu.get_device_name())'
-python3 -c 'import importlib.util; missing=[m for m in ("build","setuptools","wheel") if importlib.util.find_spec(m) is None]; assert not missing, "Missing wheel-build dependencies: "+str(missing)+"; install them with python3 -m pip install build setuptools wheel"'
+python3 -c 'import importlib.util; missing=[m for m in ("setuptools","wheel") if importlib.util.find_spec(m) is None]; assert not missing, "Missing wheel-build dependencies: "+str(missing)+"; use a container with setuptools and wheel installed"'
 task_ref=$(git rev-parse HEAD)
 echo "Testing commit $task_ref, custom V3 weight_quant_mode=6"
 if ((task_reuse_op)); then

@@ -2,6 +2,7 @@
 
 import configparser
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,16 +32,41 @@ class WheelEntrypointTests(unittest.TestCase):
             source / "attention/mla_prolog_v3/torch_extension",
             ignore=shutil.ignore_patterns("__pycache__"),
         )
+        # Exercise the production shell builder, including fallback when
+        # `import build` resolves a package with no runnable build frontend.
+        blockers = temporary / "no-build-frontend"
+        (blockers / "build").mkdir(parents=True)
+        (blockers / "build/__init__.py").write_text("")
+        binaries = temporary / "bin"
+        binaries.mkdir()
+        python_launcher = binaries / "python3"
+        python_launcher.write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        python_launcher.chmod(0o755)
         environment = dict(
             os.environ,
             TORCH_EXTENSION_OPS="mla_prolog_v3",
             TORCH_EXTENSION_VENDOR="mla_mxfp4",
             TORCH_DEVICE_BACKEND_AUTOLOAD="0",
             FLA_NPU_DISABLE_PTH="1",
+            PATH=str(binaries) + os.pathsep + os.environ.get("PATH", ""),
+            PYTHONPATH=str(blockers) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        )
+        build_source = (repo / "build.sh").read_text()
+        function = build_source.split("function build_torch_extension_whl() {", 1)[1]
+        function = "function build_torch_extension_whl() {" + function.split("\nbuild_lib()", 1)[0]
+        cls.builder = temporary / "build-wheel.sh"
+        cls.builder.write_text(
+            '#!/usr/bin/env bash\nset -eu\nCURRENT_DIR="$1"\n'
+            'ascend_op_name=mla_prolog_v3\nvendor_name=mla_mxfp4\n'
+            'log() { printf "%s\\n" "$*"; }\n'
+            + function
+            + '\nbuild_torch_extension_whl\n'
         )
         built = subprocess.run(
-            [sys.executable, "setup.py", "bdist_wheel"],
-            cwd=source / "torch_extension",
+            ["bash", str(cls.builder), str(source)],
+            cwd=source,
             env=environment,
             capture_output=True,
             text=True,
@@ -51,6 +77,8 @@ class WheelEntrypointTests(unittest.TestCase):
             raise AssertionError(
                 "Vendor wheel build failed:\n" + (built.stdout + built.stderr)[-8000:]
             )
+        if "using installed setuptools/wheel" not in built.stdout:
+            raise AssertionError("Missing-build fallback was not exercised")
         wheels = list((source / "torch_extension/dist").glob("*.whl"))
         if len(wheels) != 1:
             raise AssertionError(f"Expected one vendor wheel, got {wheels}")
@@ -58,6 +86,24 @@ class WheelEntrypointTests(unittest.TestCase):
         with zipfile.ZipFile(wheels[0]) as wheel:
             wheel.extractall(cls.unpacked)
         cls.environment = environment
+
+    def test_failed_packaging_returns_error(self):
+        with tempfile.TemporaryDirectory(prefix="mla-failed-wheel-") as directory:
+            source = Path(directory)
+            extension = source / "torch_extension"
+            extension.mkdir()
+            (extension / "setup.py").write_text('raise RuntimeError("backend failure")\n')
+            failed = subprocess.run(
+                ["bash", str(self.builder), str(source)],
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("backend failure", failed.stdout)
+            self.assertNotIn("whl package built successfully", failed.stdout)
 
     def test_wheel_metadata_and_vendor_import_rewrite(self):
         metadata = list(self.unpacked.glob("*.dist-info/entry_points.txt"))

@@ -16,6 +16,8 @@ git clone --depth 1 https://github.com/Qiming-zhang-rondo/cann-mla-prolog-mxfp4.
 
 安装的 Python 包为 `cann_ops_transformer_mla_mxfp4`，OPP 为 `mla_mxfp4_transformer`；自定义库优先级只在测试进程内生效。默认 SoC 为 `ascend950`，可用 `MLA_MXFP4_SOC` 指定实际编译目标；必须使用 A5 / arch35，A3 不在实现范围内。`MAX_JOBS` 可控制编译并行度。
 
+Python wheel 打包复用容器已有的 setuptools/wheel；没有 `build` 模块时自动使用 `setup.py bdist_wheel`，不下载 Python 打包依赖。wheel 安装使用 `--no-index --no-deps`，保留容器内 torch/torch_npu。
+
 入口会在第一个 Python 进程启动前关闭 FLA `.pth` 注入和 torch 自动 backend 加载，显式导入 torch_npu 后恢复本次私有 OPP。日志分别显示 V3 workspace 与 compute API 所属库，并拒绝二者来自不同库；这不能单独证明设备 kernel 的来源或正确性。仅构建 wheel 时保留刚完成的算子构建目录。
 
 已有目录更新后重测：
