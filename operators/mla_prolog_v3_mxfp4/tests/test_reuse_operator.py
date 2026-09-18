@@ -27,6 +27,7 @@ class ReuseOperatorTests(unittest.TestCase):
         shutil.copyfile(SCRIPT, self.script)
         self.calls = self.repo / "python-calls.jsonl"
         self.build_calls = self.repo / "build-calls.txt"
+        self.install_calls = self.repo / "install-calls.txt"
         binaries = self.repo / "fake-bin"
         binaries.mkdir()
         self.write_executable(binaries / "uname", "#!/bin/sh\nprintf 'Linux\\n'\n")
@@ -97,6 +98,7 @@ class ReuseOperatorTests(unittest.TestCase):
             LD_LIBRARY_PATH="unrelated-existing-library",
             MLA_REUSE_CALLS=str(self.calls),
             MLA_REUSE_BUILD_CALLS=str(self.build_calls),
+            MLA_REUSE_INSTALL_CALLS=str(self.install_calls),
         )
 
     @staticmethod
@@ -114,6 +116,37 @@ class ReuseOperatorTests(unittest.TestCase):
             )
         return directory, opp.resolve()
 
+    def enable_package_build(self, *, exit_code=0):
+        self.write_executable(
+            self.repo / "package-fixture.run",
+            "#!/usr/bin/env bash\nset -eu\n"
+            'printf \'%s\\n\' "$*" >> "$MLA_REUSE_INSTALL_CALLS"\n'
+            'for arg in "$@"; do\n'
+            '  case "$arg" in --install-path=*) prefix=${arg#--install-path=} ;; esac\n'
+            "done\n"
+            'library="$prefix/opp/vendors/mla_mxfp4_transformer/op_api/lib/libcust_opapi.so"\n'
+            'mkdir -p "$(dirname "$library")"\n'
+            ': > "$library"\n',
+        )
+        self.write_executable(
+            self.repo / "build.sh",
+            "#!/usr/bin/env bash\nset -eu\n"
+            'printf \'%s\\n\' "$*" >> "$MLA_REUSE_BUILD_CALLS"\n'
+            'case "$1" in\n'
+            "  --pkg)\n"
+            f"    if (( {exit_code} )); then exit {exit_code}; fi\n"
+            "    mkdir -p build_out\n"
+            "    cp package-fixture.run build_out/cann-ops-transformer-mla_mxfp4-test.run\n"
+            "    ;;\n"
+            "  --torch_extension)\n"
+            "    mkdir -p build_out\n"
+            "    : > build_out/cann_ops_transformer_mla_mxfp4-0.0.0-py3-none-any.whl\n"
+            "    ;;\n"
+            "  *) exit 93 ;;\n"
+            "esac\n",
+        )
+        self.env["MLA_MXFP4_INSTALL_DIR"] = str(self.repo / "target installation")
+
     def launch(self, *args):
         result = subprocess.run(
             ["bash", str(self.script), *args],
@@ -124,7 +157,11 @@ class ReuseOperatorTests(unittest.TestCase):
             timeout=15,
             check=False,
         )
-        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        calls = (
+            [json.loads(line) for line in self.calls.read_text().splitlines()]
+            if self.calls.exists()
+            else []
+        )
         builds = (
             self.build_calls.read_text().splitlines()
             if self.build_calls.exists()
@@ -213,6 +250,67 @@ class ReuseOperatorTests(unittest.TestCase):
         self.assertIn("No installed MLA MXFP4 operator found", result.stderr)
         self.assertEqual(builds, [])
         self.assertFalse(any(call["kind"] in ("pip", "runner") for call in calls))
+
+    def test_incremental_resumes_package_build_then_installs_and_forwards_test_args(
+        self,
+    ):
+        self.enable_package_build()
+        forwarded = [
+            "--tokens",
+            "17",
+            "--iterations",
+            "2",
+            "--output",
+            "resumed results.json",
+        ]
+        result, calls, builds = self.launch("--incremental", *forwarded)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(builds), 2)
+        package_args = builds[0].split()
+        self.assertEqual(package_args[0], "--pkg")
+        self.assertEqual(package_args.count("--incremental"), 1)
+        self.assertIn("--ops=mla_prolog_v3", package_args)
+        self.assertTrue(builds[1].startswith("--torch_extension "))
+        self.assertEqual(len(self.install_calls.read_text().splitlines()), 1)
+        runner = next(call for call in calls if call["kind"] == "runner")
+        self.assertEqual(runner["args"][2:], forwarded)
+        expected_opp = (
+            Path(self.env["MLA_MXFP4_INSTALL_DIR"])
+            / "opp/vendors/mla_mxfp4_transformer"
+        )
+        self.assertEqual(runner["opp"], str(expected_opp))
+        self.assertTrue((expected_opp / "op_api/lib/libcust_opapi.so").is_file())
+
+    def test_default_package_build_remains_clean(self):
+        self.enable_package_build()
+        result, calls, builds = self.launch("--tokens", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(builds), 2)
+        self.assertTrue(builds[0].startswith("--pkg "))
+        self.assertNotIn("--incremental", builds[0].split())
+        self.assertTrue(any(call["kind"] == "runner" for call in calls))
+
+    def test_failed_incremental_build_does_not_install_stale_package_or_run_tests(self):
+        self.enable_package_build(exit_code=24)
+        stale_package = self.repo / "build_out/cann-ops-transformer-mla_mxfp4-stale.run"
+        stale_package.parent.mkdir()
+        shutil.copyfile(self.repo / "package-fixture.run", stale_package)
+        result, calls, builds = self.launch("--incremental", "--tokens", "1")
+        self.assertEqual(result.returncode, 24, result.stdout + result.stderr)
+        self.assertEqual(len(builds), 1)
+        self.assertIn("--incremental", builds[0].split())
+        self.assertFalse(self.install_calls.exists())
+        self.assertFalse(
+            any(Path(self.env["MLA_MXFP4_INSTALL_DIR"]).rglob("libcust_opapi.so"))
+        )
+        self.assertFalse(any(call["kind"] in ("pip", "runner") for call in calls))
+
+    def test_reuse_and_incremental_are_rejected_before_npu_probe(self):
+        result, calls, builds = self.launch("--reuse-op", "--incremental")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--reuse-op and --incremental cannot be combined", result.stderr)
+        self.assertEqual(calls, [])
+        self.assertEqual(builds, [])
 
 
 if __name__ == "__main__":

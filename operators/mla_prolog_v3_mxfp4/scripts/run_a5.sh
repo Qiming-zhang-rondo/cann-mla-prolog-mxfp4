@@ -5,14 +5,19 @@ set -euo pipefail
 export FLA_NPU_DISABLE_PTH=1
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 task_reuse_op=0
+task_incremental=0
 task_test_args=()
 for task_arg in "$@"; do
-  if [[ $task_arg == --reuse-op ]]; then
-    task_reuse_op=1
-  else
-    task_test_args+=("$task_arg")
-  fi
+  case "$task_arg" in
+    --reuse-op) task_reuse_op=1 ;;
+    --incremental) task_incremental=1 ;;
+    *) task_test_args+=("$task_arg") ;;
+  esac
 done
+if ((task_reuse_op && task_incremental)); then
+  echo '--reuse-op and --incremental cannot be combined: reuse skips the CANN build; incremental resumes it.' >&2
+  exit 2
+fi
 task_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 task_repo=$(cd -- "$task_script_dir/../../.." && pwd)
 cd "$task_repo"
@@ -56,7 +61,11 @@ else
 task_stamp=$(date +%Y%m%d-%H%M%S)
 task_install=${MLA_MXFP4_INSTALL_DIR:-$task_repo/.a5-install/$task_stamp}
 mkdir -p "$task_install"
-bash build.sh --pkg --soc="${MLA_MXFP4_SOC:-ascend950}" --ops=mla_prolog_v3 --vendor_name=mla_mxfp4 -j"${MAX_JOBS:-8}"
+task_pkg_args=(--pkg --soc="${MLA_MXFP4_SOC:-ascend950}" --ops=mla_prolog_v3 --vendor_name=mla_mxfp4 -j"${MAX_JOBS:-8}")
+if ((task_incremental)); then
+  task_pkg_args+=(--incremental)
+fi
+bash build.sh "${task_pkg_args[@]}"
 mapfile -t task_packages < <(python3 -c 'import pathlib; print("\n".join(str(p) for p in pathlib.Path("build_out").glob("cann-ops-transformer-mla_mxfp4*.run")))')
 [[ ${#task_packages[@]} == 1 ]] || { echo 'Expected exactly one fresh .run package in build_out.' >&2; exit 1; }
 bash "${task_packages[0]}" --quiet --install-path="$task_install"

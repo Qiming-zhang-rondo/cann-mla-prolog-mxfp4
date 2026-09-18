@@ -12,6 +12,13 @@
 
 See [current implementation](IMPLEMENTATION.md), [test guide](TEST.md), and [source snapshot provenance](../../../SOURCE_SNAPSHOT.md).
 
+2026-09-18, Prolog build stops at common-header staging:
+
+- The user log fails copying `third_party/ops-tensor/include/tensor_api/impl/tensor_api`; the later `-Wfloat-equal` messages are warnings. No new Prolog numerical result is produced by this build.
+- Validate the Tensor API root at configuration time and fall back to the selected CANN toolkit's existing `asc` headers when the source checkout lacks them. Require all four header subtrees from one root. Both `add_ops_src_copy` and the package install retain their required copies; no empty directories or optional-copy bypass is introduced. The source resolver already used the CANN location for a sibling ops-tensor checkout, but not for the third_party checkout in the failure log.
+- Add launcher `--incremental` to retain this failed build's objects and let CMake regenerate and continue. Keep default clean builds and `--reuse-op` semantics. A failed build still stops before installing any stale package.
+- Validate resolution and actual copy/install using local CMake fixtures and launcher orchestration tests. Full Ascend C compilation on this container remains to be rerun; kernel source and numerical thresholds are unchanged.
+
 2026-09-15. First A5 compile feedback and targeted review:
 
 - The supplied log fails to compile `MatmulMxFp4SplitK`: `MMParams::kScale` is `uint32_t`, but `BYTE_BLOCK` is `uint64_t`; `Align(T, T)` cannot deduce one type. Cast the constant to `uint32_t` at this call. The original expression reproduces the compiler error locally; the corrected expression compiles and preserves padded/unpadded stride arithmetic, including 48-to-64 scale padding.

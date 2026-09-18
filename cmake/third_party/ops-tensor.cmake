@@ -134,3 +134,8 @@ else()
   endif()
 
 endif()
+
+# Validate the root consumed by func.cmake and custom_build.cmake. Some source
+# checkouts have no include/tensor_api tree; reuse the installed CANN headers.
+include("${CMAKE_CURRENT_LIST_DIR}/tensor_api.cmake")
+resolve_tensor_api_headers()

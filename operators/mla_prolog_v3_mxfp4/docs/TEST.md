@@ -12,7 +12,18 @@ bash operators/mla_prolog_v3_mxfp4/scripts/run_a5.sh 2>&1 | tee mla_mxfp4_a5.log
 
 自动build自定义CANN包→安装到checkout内独立路径→优先加载该包→build/install本仓torch extension→运行mode6。旧mode仍调用V4；mode6显式调用V3。日志显示commit、PyTorch/torch_npu版本、真实API所在共享库。旧CANN不接受mode6时失败，不回退。
 
-自定义wheel及runner统一使用独立包`cann_ops_transformer_mla_mxfp4`，不会导入系统旧`cann_ops_transformer`。启动前检查build/setuptools/wheel依赖，缺失时明确失败，避免上游build.sh静默跳过wheel。
+自定义wheel及runner统一使用独立包`cann_ops_transformer_mla_mxfp4`，不会导入系统旧`cann_ops_transformer`。启动前检查setuptools/wheel依赖；没有可选的Python build模块时复用容器setuptools构建wheel。
+
+同一容器、同一checkout构建失败后，可以保留已有构建目录重试：
+
+```bash
+git pull --ff-only
+MAX_JOBS=8 bash test_mla_mxfp4.sh --incremental
+```
+
+`--incremental`重新配置CMake并继续CANN构建；与跳过CANN构建的`--reuse-op`不能同时使用。默认不加参数仍是完整构建。失败的构建不会继续安装旧包或运行测试。
+
+若`ops-tensor/include/tensor_api`不完整，CMake会从当前CANN安装的`<arch>-linux/asc`或`asc`目录复用头文件，并打印`Tensor API headers: ...`。四组`impl/include`下的`tensor_api/c_api`头文件必须来自同一个完整根目录；复制和打包共用该路径。如果都不完整，在配置阶段报告缺失项，不创建空目录跳过。这个头文件修复不下载依赖；上游其他源码依赖的获取流程保持原样，整个构建不保证离线。
 
 ## CPU检查
 
