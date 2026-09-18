@@ -9,6 +9,11 @@
 # -----------------------------------------------------------------------------------------------------------
 
 cmake_minimum_required(VERSION 3.18.4)
+# Honor the caller's temporary download setting on CMake < 3.30 as well.
+# Keep it out of CMakeCache.txt, including in prepare-build child processes.
+if(DEFINED ENV{CMAKE_TLS_VERIFY} AND NOT "$ENV{CMAKE_TLS_VERIFY}" STREQUAL "")
+    set(CMAKE_TLS_VERIFY "$ENV{CMAKE_TLS_VERIFY}")
+endif()
 include(cmake/fetch_cann_cmake.cmake)
 if(DEFINED RULE_LAUNCH AND RULE_LAUNCH)
     set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${RULE_LAUNCH})

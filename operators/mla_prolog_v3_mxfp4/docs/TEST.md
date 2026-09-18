@@ -23,6 +23,8 @@ MAX_JOBS=8 bash test_mla_mxfp4.sh --incremental
 
 `--incremental`重新配置CMake并继续CANN构建；与跳过CANN构建的`--reuse-op`不能同时使用。默认不加参数仍是完整构建。失败的构建不会继续安装旧包或运行测试。
 
+企业HTTPS网关证书不被容器信任时，优先配置企业CA。经明确选择，也可以仅对本次构建使用`CMAKE_TLS_VERIFY=0 MAX_JOBS=8 bash test_mla_mxfp4.sh --incremental`，临时跳过CMake下载的服务器证书校验。该开关不会改系统或Git全局配置，也不会取消依赖归档自身的hash校验；顶层及prepare子构建均读取它，兼容CMake 3.30之前的版本。未设置时保留原验证行为，不写入CMake缓存；后续正常构建会重新生成下载规则。
+
 若`ops-tensor/include/tensor_api`不完整，CMake会从当前CANN安装的`<arch>-linux/asc`或`asc`目录复用头文件，并打印`Tensor API headers: ...`。四组`impl/include`下的`tensor_api/c_api`头文件必须来自同一个完整根目录；复制和打包共用该路径。如果都不完整，在配置阶段报告缺失项，不创建空目录跳过。这个头文件修复不下载依赖；上游其他源码依赖的获取流程保持原样，整个构建不保证离线。
 
 ## CPU检查
